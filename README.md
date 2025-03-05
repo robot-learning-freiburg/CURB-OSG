@@ -11,7 +11,7 @@ This repository is the official implementation of the paper:
 > *preprint*, 2025
 
 <p align="center">
-  <img src="./assets/curb_overview.png" alt="Overview of CURB-OSG approach" width="800" />
+  <img src="./assets/curb-osg_overview.png" alt="Overview of CURB-OSG approach" width="800" />
 </p>
 
 If you find our work useful, please consider citing our paper:
