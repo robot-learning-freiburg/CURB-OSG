@@ -1,5 +1,5 @@
 # CURB-OSG
-[**arXiv**](https://arxiv.org/abs/) | [**Website**](https://ov-curb.cs.uni-freiburg.de/) | [**Video**](https://www.youtube.com/)
+[**arXiv**](https://arxiv.org/abs/) | [**Website**](https://ov-curb.cs.uni-freiburg.de/) | [**Video**](https://youtu.be/LEP_LZQzUV4)
 
 This repository is the official implementation of the paper:
 
