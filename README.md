@@ -36,6 +36,12 @@ Mapping and scene representation are fundamental to reliable planning and naviga
 
 We will release the code upon the acceptance of our paper.
 
+### 🚗🚙🛻 ROS Player to Simulate Multiple Radar RobotCar Agents
+
+We separately release our developed tool for multi-agent urban mapping based on the Oxford Radar RobotCar Dataset.
+Please find the code at this link: https://github.com/TimSteinke/multi_robotcar
+
+
 ## 👩‍⚖️  License
 
 For academic usage, the code is released under the [GPLv3](https://www.gnu.org/licenses/gpl-3.0.en.html) license.
