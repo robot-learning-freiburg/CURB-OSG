@@ -1,5 +1,5 @@
 # CURB-OSG
-[**arXiv**](https://arxiv.org/abs/) | [**Website**](https://ov-curb.cs.uni-freiburg.de/) | [**Video**](https://youtu.be/LEP_LZQzUV4)
+[**arXiv**](https://arxiv.org/abs/2503.08474) | [**Website**](https://ov-curb.cs.uni-freiburg.de/) | [**Video**](https://youtu.be/LEP_LZQzUV4)
 
 This repository is the official implementation of the paper:
 
@@ -8,7 +8,7 @@ This repository is the official implementation of the paper:
 > [Tim Steinke]()&ast;, [Martin Büchner](https://rl.uni-freiburg.de/people/buechner)&ast;, [Niclas Vödisch](https://vniclas.github.io/)&ast;, and [Abhinav Valada](https://rl.uni-freiburg.de/people/valada). <br>
 > &ast;Equal contribution. <br> 
 > 
-> *preprint*, 2025
+> *arXiv preprint arXiv:2503.08474*, 2025
 
 <p align="center">
   <img src="./assets/curb-osg_overview.png" alt="Overview of CURB-OSG approach" width="800" />
@@ -19,7 +19,7 @@ If you find our work useful, please consider citing our paper:
 @article{steinke2025curbosg,
   author={Steinke, Tim and Büchner, Martin and Vödisch, Niclas and Valada, Abhinav},
   title={Collaborative Dynamic 3D Scene Graphs for Open-Vocabulary Urban Scene Understanding},
-  journal={preprint},
+  journal={arXiv preprint arXiv:2503.08474},
   year={2025},
 }
 ```
