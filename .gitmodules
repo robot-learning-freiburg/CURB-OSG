@@ -1,12 +1,3 @@
-[submodule "catkin_ws/src/ndt_omp"]
-	path = src/ndt_omp
-	url = https://github.com/elias-greve/ndt_omp
-[submodule "catkin_ws/src/fast_gicp"]
-	path = src/fast_gicp
-	url = https://github.com/elias-greve/fast_gicp
-[submodule "libs/robotcar"]
-	path = src/robotcar_dataset_sdk
-	url = https://github.com/ori-mrg/robotcar-dataset-sdk.git
 [submodule "src/radar_robotcar_player"]
 	path = src/radar_robotcar_player
 	url = https://github.com/TimSteinke/multi_robotcar.git
@@ -19,3 +10,12 @@
 [submodule "src/curb_projection/src/open_graph/GroundingDINO"]
 	path = src/curb_projection/src/open_graph/GroundingDINO
 	url = https://github.com/IDEA-Research/GroundingDINO.git
+[submodule "src/ndt_omp"]
+	path = src/ndt_omp
+	url = https://github.com/elias-greve/ndt_omp
+[submodule "src/fast_gicp"]
+	path = src/fast_gicp
+	url = https://github.com/elias-greve/fast_gicp
+[submodule "src/robotcar_dataset_sdk"]
+	path = src/robotcar_dataset_sdk
+	url = https://github.com/ori-mrg/robotcar-dataset-sdk.git
