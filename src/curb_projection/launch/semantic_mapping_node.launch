@@ -1,0 +1,47 @@
+<launch>
+
+  <arg name="keyframes_topic" default="/agent_keyframes" />
+  <arg name="models_dir" default="$(find curb_projection)/intrinsics" />
+  <arg name="pcl_output_topic" default="pcl_rgb" />
+  <arg name="objects_output_topic" default="static_objects" />
+  <arg name="baseline" default="false" />
+
+
+  <node pkg="curb_projection" type="semantic_mapping_node" name="semantic_mapping_node" output="screen" required="true">
+
+    <!-- camera models -->
+    <param name="models_dir" value="$(arg models_dir)" />
+
+    <!-- topics -->
+    <param name="keyframes_topic" value="$(arg keyframes_topic)" />
+    <param name="pcl_output_topic" value="$(arg pcl_output_topic)" />
+    <param name="objects_output_topic" value="$(arg objects_output_topic)" />
+
+
+    <!-- choice of segmentation pipeline (xor) -->
+    <param name="use_maskclip" value="true" if="$(arg baseline)" />
+    <param name="use_opengraph" value="false" if="$(arg baseline)" />
+    <param name="use_maskclip" value="false" unless="$(arg baseline)" />
+    <param name="use_opengraph" value="true" unless="$(arg baseline)" />
+
+    <!-- maskclip mapping -->
+    <param name="maskclip_prompt" value="tree,side walk or footpath or pavement,road,traffic light,traffic sign,vehicle,building,other,house" />
+
+    <!-- opengraph mapping -->
+    <param name="weights_folder" value="$(find curb_projection)/saved_models" />
+    <param name="concept_weights" value="tap_concept_weights_cityscapes_19.pkl" />
+    <param name="use_tag2text" value="false" />
+
+    <!-- choice of object filters -->
+    <param name="target_classes" value="traffic light,traffic sign" />
+    <param name="min_obj_score" value="0.0" />
+    <param name="outlier_filtering" value="true" />
+    <param name="range_filtering" value="true" />
+
+    <!-- whether to store all points + classes for debugging -->
+    <param name="global_debug_map" value="true" />
+
+
+  </node>
+
+</launch>

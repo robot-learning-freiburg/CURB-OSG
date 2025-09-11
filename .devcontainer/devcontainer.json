@@ -1,0 +1,77 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+// README at: https://github.com/devcontainers/templates/tree/main/src/ubuntu
+{
+	"name": "collabsg-vscode",
+	"build": {
+		"context": "..",
+        "dockerfile": "Dockerfile"
+    },
+	"runArgs": [
+		"--name=collabsg-vscode",
+		// "--entrypoint=bash",
+		"-it",
+		"--runtime=nvidia",
+		"--gpus=all",
+		"--rm",
+		"--network=host",
+		"--volume",
+		// "${localEnv:HOME}/.Xauthority:/tmp/.Xauthority:rw",
+		// "--env=DISPLAY",
+		"--privileged"
+	],
+	"containerEnv": {
+		// "XAUTHORITY": "/tmp/.Xauthority",
+		// "QT_X11_NO_MITSHM": "1"
+		"DISPLAY": ":2"
+	},
+	"remoteUser": "curb",
+	"mounts": [
+		"source=collabsg-bashhistory,target=/commandhistory,type=volume",
+		"source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind,consistency=cached"
+	],
+
+	// Use 'postCreateCommand' to run commands after the container is created.
+	"postCreateCommand": "/workspaces/collaborative-scene-graphs/.devcontainer/container-setup.sh",
+	"postStartCommand": "nohup bash -c 'source /opt/ros/noetic/setup.bash && /opt/ros/noetic/bin/roscore -p 11312 &'",
+	// remote desktop
+	"features": {
+		"ghcr.io/devcontainers/features/desktop-lite:1": {
+			"noVncVersion": "1.2.0"
+		}
+	},
+	"forwardPorts": [6080, 5901],
+	"portsAttributes": {
+		"6080": {
+		"label": "desktop"
+		},
+		"5901": {
+		"label": "vnc"
+		}
+	},
+
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"ms-azuretools.vscode-docker",
+				"ms-python.python",
+				"ms-vscode.cpptools@1.18.5",
+				"ms-vscode.cpptools-extension-pack",
+				"twxs.cmake",
+				"ms-vscode.cmake-tools",
+				"ms-python.vscode-pylance",
+				"ms-python.debugpy",
+				"shd101wyy.markdown-preview-enhanced",
+				"mechatroner.rainbow-csv",
+				"ms-iot.vscode-ros",
+				"christian-kohler.path-intellisense",
+				"llvm-vs-code-extensions.vscode-clangd",
+				"GitHub.copilot",
+				"GitHub.copilot-chat",
+				"ms-toolsai.jupyter",
+				"ms-python.black-formatter"
+			]
+		}
+	}
+
+	// "postStartCommand": "bash -c 'source ~/.bashrc' && conda activate isaac-sim && bash -c 'source /isaac-sim/setup_conda_env.sh'"
+}

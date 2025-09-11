@@ -1,0 +1,14 @@
+#!/usr/bin/env python3
+import ros_numpy
+import rospy
+from curb_scene_graph import SceneGraph
+from curb_sg_eval import KeyframeReprojector, IntersectionsEval, TimetravelReprojector
+
+if __name__ == "__main__":
+    rospy.init_node("curb_scene_graph_node")
+    node = SceneGraph()
+    landmark_eval = KeyframeReprojector(node.landmark_layer)
+    tt_repro = TimetravelReprojector(node.landmark_layer)
+    isec_eval = IntersectionsEval(node.road_graph)
+
+    rospy.spin()

@@ -1,0 +1,11 @@
+<launch>
+
+  <param name="/use_sim_time" value="false" />
+
+  <node name="plot_gps_ins" pkg="curb_helpers" type="plot-gps-ins.py" output="screen" required="false" />
+
+  <node name="osm_handselect_intersections" pkg="curb_scene_graph" type="osm_handselect_intersections" output="screen" clear_params="true" required="true" >
+    <param name="dataset_dir" value="$(find curb_scene_graph)/eval_datasets/" />
+  </node>
+
+</launch>

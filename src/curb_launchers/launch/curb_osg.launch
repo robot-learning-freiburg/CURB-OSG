@@ -1,0 +1,187 @@
+
+<launch>
+
+  <env name="ROSCONSOLE_CONFIG_FILE"
+       value="$(find curb_launchers)/config/rosconsole.conf"/>
+  <env name="ROSCONSOLE_FORMAT" value="[${severity} ${node}]: ${message}" />
+
+  <!-- ######################################################## -->
+  <!-- Agent selector -->
+  <arg name="run_agent_0" default="true" />
+  <arg name="run_agent_1" default="true" />
+  <arg name="run_agent_2" default="true" />
+
+
+  <!-- perception modules on/off flags -->
+  <arg name="remove_dynamic_objects" default="true" />
+  <arg name="detect_landmarks" default="true" />
+
+  <!-- set to false for opengraph, true for baseline semantic segmentation pipeline -->
+  <arg name="semseg_baseline" default="false" />
+
+  <!-- ######################################################## -->
+  <!-- simulation time control -->
+  <arg name="clock_multiplier" default="0.5" />
+
+  <node pkg="curb_helpers" type="clock_server.py" name="clock_server" output="screen" >
+    <param name="clock_multiplier" value="$(arg clock_multiplier)" />
+  </node>
+
+  <param name="/use_sim_time" value="true" />
+
+  <!-- ######################################################## -->
+  <!-- Map server: combine keyframes from all agents -->
+  <include file="$(find hdl_graph_slam)/launch/map_server.launch" >
+    <arg name="remove_dynamic_objects" value="$(arg remove_dynamic_objects)" />
+  </include>
+
+
+  <!-- ######################################################## -->
+  <!-- Viz helpers -->
+  <node pkg="curb_helpers" type="plot-gps-ins.py" name="gps_pose_plotter" />
+  <node pkg="curb_helpers" type="viz-odom.py" name="odom_kf_viz" />
+
+  <!-- ######################################################## -->
+  <!-- PC projection node (MaskCLIP/OpenGraph) -->
+  <group if="$(arg detect_landmarks)" >
+    <include file="$(find curb_projection)/launch/semantic_mapping_node.launch" >
+      <!-- baseline=maskclip not baseline=opengraph -->
+      <arg name="baseline" value="$(arg semseg_baseline)" />
+    </include>
+  </group>
+
+  <!-- ######################################################## -->
+  <!-- MASA tracking -->
+  <group if="$(arg remove_dynamic_objects)">
+    <include file="$(find curb_projection)/launch/masa_node_precomputed.launch" />
+  </group>
+
+  <!-- ######################################################## -->
+  <!-- Scene Graph node -->
+  <include file="$(find curb_scene_graph)/launch/curb_scene_graph.launch" />
+
+
+  <!-- ######################################################## -->
+  <!-- Metrics -->
+  <node pkg="curb_metrics" type="odometry_metrics.py" name="odom_metrics_node" output="screen" required="true" />
+  <node pkg="curb_metrics" type="absolute_trajectory_error.py" name="ate_metric_node" output="screen" required="true" />
+
+
+  <!-- ######################################################## -->
+  <!-- Agent 0 -->
+
+  <arg name="agent_no_0" default="0" />
+  <arg name="agent_name_0" default="robotcar_$(arg agent_no_0)" />
+  <arg name="shift_agent_0" default="false" />
+
+  <param name="/robotcar_$(arg agent_no_0)/running" value="$(arg run_agent_0)" />
+
+  <group ns="$(arg agent_name_0)" if="$(arg run_agent_0)">
+    <param name="tf_prefix" value="$(arg agent_name_0)" />
+
+    <!-- player -->
+    <include file="$(find radar_robotcar_player)/launch/radar_robotcar.launch">
+      <arg name="tf_prefix" value="$(arg agent_name_0)" />
+      <arg name="dataset"
+        value="/workspaces/collaborative-scene-graphs/data/radar-robotcar/2019-01-11-13-24-51-radar-oxford-10k" />
+      <arg name="sdk" value="/workspaces/collaborative-scene-graphs/src/robotcar_dataset_sdk" />
+      <!-- Remove first X seconds of sequence -->
+      <arg name="clip_first_secs" value="60" />
+      <!-- <arg name="clip_first_secs" value="180" /> -->
+      <arg name="startup_delay_secs" value="0" />
+      <!-- <arg name="play_until_timestamp" value="0001547214125480917" /> -->
+      <!-- <arg name="play_until_timestamp" value="0001547213094196036" /> -->
+      <arg name="play_until_timestamp" value="0002000000000000000" />
+      <arg name="initial_shift_x" value="1500" if="$(arg shift_agent_0)" />
+      <arg name="initial_shift_y" value="600" if="$(arg shift_agent_0)" />
+    </include>
+
+    <!-- HDL Graph SLAM for this agent: generate keyframes -->
+    <include file="$(find hdl_graph_slam)/launch/agent.launch" >
+      <arg name="agent_no" value="$(arg agent_no_0)" />
+      <arg name="enable_scan_matching_odometry" value="true" />
+      <arg name="left_points_topic" value="/$(arg agent_name_0)/lidar/left" />
+      <arg name="right_points_topic" value="/$(arg agent_name_0)/lidar/right" />
+      <arg name="base_link_frame_id" default="$(arg agent_name_0)/base_link" />
+      <arg name="pose_topic" default="/$(arg agent_name_0)/ins/pose" />
+    </include>
+
+  </group>
+
+
+  <!-- ######################################################## -->
+  <!-- Agent 1 -->
+
+  <arg name="agent_no_1" default="1" />
+  <arg name="agent_name_1" default="robotcar_$(arg agent_no_1)" />
+  <arg name="shift_agent_1" default="true" />
+
+  <param name="/robotcar_$(arg agent_no_1)/running" value="$(arg run_agent_1)" />
+
+  <group ns="$(arg agent_name_1)" if="$(arg run_agent_1)">
+    <param name="tf_prefix" value="$(arg agent_name_1)" />
+
+    <include file="$(find radar_robotcar_player)/launch/radar_robotcar.launch">
+      <arg name="tf_prefix" value="$(arg agent_name_1)" />
+      <arg name="dataset"
+        value="/workspaces/collaborative-scene-graphs/data/radar-robotcar/2019-01-14-14-15-12-radar-oxford-10k" />
+      <arg name="sdk" value="/workspaces/collaborative-scene-graphs/src/robotcar_dataset_sdk" />
+      <arg name="clip_first_secs" value="16" />
+      <!-- <arg name="clip_first_secs" value="180" /> -->
+      <arg name="startup_delay_secs" value="0" />
+      <!-- <arg name="play_until_timestamp" value="0001547476127067551" /> -->
+      <arg name="play_until_timestamp" value="0002000000000000000" />
+      <arg name="initial_shift_x" value="500" if="$(arg shift_agent_1)" />
+      <arg name="initial_shift_y" value="200" if="$(arg shift_agent_1)" />
+    </include>
+
+    <include file="$(find hdl_graph_slam)/launch/agent.launch" >
+      <arg name="agent_no" value="$(arg agent_no_1)" />
+      <arg name="enable_scan_matching_odometry" value="true" />
+      <arg name="left_points_topic" value="/$(arg agent_name_1)/lidar/left" />
+      <arg name="right_points_topic" value="/$(arg agent_name_1)/lidar/right" />
+      <arg name="base_link_frame_id" default="/$(arg agent_name_1)/base_link" />
+      <arg name="pose_topic" default="/$(arg agent_name_1)/ins/pose" />
+    </include>
+
+  </group>
+
+
+  <!-- ######################################################## -->
+  <!-- Agent 2 -->
+
+  <arg name="agent_no_2" default="2" />
+  <arg name="agent_name_2" default="robotcar_$(arg agent_no_2)" />
+  <arg name="shift_agent_2" default="true" />
+
+  <param name="/robotcar_$(arg agent_no_2)/running" value="$(arg run_agent_2)" />
+
+  <group ns="$(arg agent_name_2)" if="$(arg run_agent_2)">
+    <param name="tf_prefix" value="$(arg agent_name_2)" />
+
+    <include file="$(find radar_robotcar_player)/launch/radar_robotcar.launch">
+      <arg name="tf_prefix" value="$(arg agent_name_2)" />
+      <arg name="dataset"
+        value="/workspaces/collaborative-scene-graphs/data/radar-robotcar/2019-01-15-13-06-37-radar-oxford-10k" />
+      <arg name="sdk" value="/workspaces/collaborative-scene-graphs/src/robotcar_dataset_sdk" />
+      <arg name="clip_first_secs" value="15" />
+      <!-- <arg name="clip_first_secs" value="1600" /> -->
+      <arg name="startup_delay_secs" value="0" />
+      <arg name="play_until_timestamp" value="0002000000000000000" />
+      <!-- <arg name="play_until_timestamp" value="0001547213151195901" /> -->
+      <arg name="initial_shift_x" value="1000" if="$(arg shift_agent_2)" />
+      <arg name="initial_shift_y" value="400" if="$(arg shift_agent_2)" />
+    </include>
+
+    <include file="$(find hdl_graph_slam)/launch/agent.launch" >
+      <arg name="agent_no" value="$(arg agent_no_2)" />
+      <arg name="enable_scan_matching_odometry" value="true" />
+      <arg name="left_points_topic" value="/$(arg agent_name_2)/lidar/left" />
+      <arg name="right_points_topic" value="/$(arg agent_name_2)/lidar/right" />
+      <arg name="base_link_frame_id" default="/$(arg agent_name_2)/base_link" />
+      <arg name="pose_topic" default="/$(arg agent_name_2)/ins/pose" />
+    </include>
+
+  </group>
+
+</launch>

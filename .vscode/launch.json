@@ -1,0 +1,128 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+
+        {
+            "name": "ROS: Launch loop debugger",
+            "type": "ros",
+            "request": "launch",
+            "target": "/workspaces/collaborative-scene-graphs/src/loop_debugger/launch/loop_debugger.launch"
+        },
+        {
+            "name": "ROS: Launch OSM Intersections",
+            "type": "ros",
+            "request": "launch",
+            "target": "/workspaces/collaborative-scene-graphs/src/curb_scene_graph/launch/osm_retrieve_intersections.launch"
+        },
+        
+        {
+            "name": "ROS: launch semantic mapping node",
+            "type": "ros",
+            "request": "launch",
+            "target": "/workspaces/collaborative-scene-graphs/src/curb_projection/launch/semantic_mapping_node.launch",
+            "env": {
+                "ROS_MASTER_URI": "http://localhost:11312"
+            }
+        },
+        {
+            "name": "ROS: Launch DLIO for robotcar_0",
+            "type": "ros",
+            "request": "launch",
+            "target": "/workspaces/collaborative-scene-graphs/src/direct_lidar_inertial_odometry/launch/dlio_odom_only_standalone.launch",
+            "env": {
+                "ROS_MASTER_URI": "http://localhost:11312"
+            }
+
+        },
+        {
+            "name": "ROS: Launch scene graph node",
+            "type": "ros",
+            "request": "launch",
+            "target": "/workspaces/collaborative-scene-graphs/src/curb_scene_graph/launch/curb_scene_graph.launch",
+            "env": {
+                "ROS_MASTER_URI": "http://localhost:11312"
+            }
+        },
+        {
+            "name": "ROS: Launch MASA offline processor",
+            "type": "ros",
+            "request": "launch",
+            "target": "/workspaces/collaborative-scene-graphs/src/curb_projection/launch/offline_masa_processor.launch",
+            "env": {
+                "ROS_MASTER_URI": "http://localhost:11312"
+            }
+
+        },
+        {
+            "name": "Python Debugger: Current File with Arguments",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": [
+                "${command:pickArgs}"
+            ]
+        },
+        {
+            "name": "Python Debugger: Current File, Without Arguments",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": [
+            ]
+        },
+        {
+            "name": "ROS: MASA node launch file",
+            "type": "ros",
+            "request": "launch",
+            "target": "/workspaces/collaborative-scene-graphs/src/curb_projection/launch/masa_node.launch",
+            "env": {
+                "ROS_MASTER_URI": "http://localhost:11312"
+            }
+
+        },
+        {
+            "name": "ROS: MASA precomputed node launch file",
+            "type": "ros",
+            "request": "launch",
+            "target": "/workspaces/collaborative-scene-graphs/src/curb_projection/launch/masa_node_precomputed.launch"
+        },
+        {
+            "name": "ROS: TRLO launch file",
+            "type": "ros",
+            "request": "launch",
+            "target": "/workspaces/collaborative-scene-graphs/src/TRLO/trlo/launch/trlo.launch"
+        },
+        {
+            "name": "Python Debugger: MASA with Arguments",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/masa/demo/masa_node.py",
+            "console": "integratedTerminal",
+            "args": "--masa_config configs/masa-gdino/masa_gdino_swinb_inference.py --masa_checkpoint saved_models/masa_models/gdino_masa.pth --score-thr 0.3 --unified --texts 'vehicle'",
+            "cwd": "${workspaceFolder}/src/masa"
+        },
+        {
+            "name": "ROS: Launch Radar Robotcar Player",
+            "type": "ros",
+            "request": "launch",
+            "target": "/workspaces/collaborative-scene-graphs/src/radar_robotcar_player/launch/radar_robotcar_player.launch"
+        },
+        {
+            "name": "ROS: Launch Projection Node",
+            "type": "ros",
+            "request": "launch",
+            "target": "/workspaces/collaborative-scene-graphs/src/curb_pc_projection/launch/curb_pc_projection.launch"
+        },
+        {
+            "name": "ROS: Launch multiplayer",
+            "type": "ros",
+            "request": "launch",
+            "target": "/workspaces/collaborative-scene-graphs/src/curb_launchers/launch/player_dlio_hdl_multi.launch"
+        }
+    ]
+}

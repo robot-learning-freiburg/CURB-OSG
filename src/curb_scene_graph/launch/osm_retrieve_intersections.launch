@@ -1,0 +1,12 @@
+<launch>
+
+  <param name="/use_sim_time" value="false" />
+
+  <node name="plot_gps_ins" pkg="curb_helpers" type="plot-gps-ins.py" output="screen" required="true" />
+
+  <node name="osm_retrieve_intersections" pkg="curb_scene_graph" type="osm_retrieve_intersections" output="screen" clear_params="true" required="true" >
+    <param name="overpass_query" value="https://overpass-api.de/api/interpreter?data=%5Bout%3Ajson%5D%5Btimeout%3A25%5D%3B%0A%2F%2F%20gather%20results%0A%2F%2F%20way%5B%22highway%22%5D%5B%22name%22~%22Woodstock%20Road%7CBanbury%20Road%7CSt%20Giles%27%7CBevington%20Road%7CParks%20Road%7CKeble%20Road%7CBlackhall%20Road%7CMuseum%20Road%7CSouth%20Parks%20Road%7CMansfield%20Road%7CHolywell%20Street%7CBroad%20Street%7CObservatory%20Street%7CWalton%20Street%7CWorcester%20Street%7CHythe%20Bridge%20Street%7CHollybush%20Row%7CSt%20Thomas%20Street%7CParadise%20Street%7CCastle%20Street%7CNew%20Road%7CPark%20End%20Street%22%5D%2851.74477945126766%2C-1.2802906502763192%2C51.77227279113861%2C-1.2292643059770028%29%3B%0Away%5B%22highway%22~%22primary%7Csecondary%7Ctertiary%7Cresidential%7Cprimary_link%7Cunclassified%22%5D%2851.74477945126766%2C-1.2802906502763192%2C51.77227279113861%2C-1.2292643059770028%29%3B%0A%2F%2F%20print%20results%0Aout%20geom%3B" />
+    <param name="dataset_dir" value="$(find curb_scene_graph)/eval_datasets/" />
+  </node>
+
+</launch>

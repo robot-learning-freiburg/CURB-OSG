@@ -1,0 +1,1 @@
+curb_projection/StaticObjectObs[] observations

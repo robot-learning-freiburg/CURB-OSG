@@ -1,0 +1,201 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- arguments -->
+  <arg name="agent_no" default="110"/>
+  <param name="agent_no" value="$(arg agent_no)" />
+
+  <arg name="nodelet_manager" default="velodyne_nodelet_manager_$(arg agent_no)" />
+  <arg name="enable_floor_detection" default="false" />
+  <arg name="enable_scan_matching_odometry" default="true" />
+  <arg name="enable_gps" default="false" />
+  <arg name="enable_imu_acc" default="false" />
+  <arg name="enable_imu_ori" default="false" />
+
+  <arg name="left_points_topic" />
+  <arg name="right_points_topic" />
+
+  <arg name="left_lidar_frame" default="/robotcar_$(arg agent_no)/velodyne_left" />
+  <arg name="right_lidar_frame" default="/robotcar_$(arg agent_no)/velodyne_right" />
+
+  <arg name="points_topic" default="/velodyne_points_stat_$(arg agent_no)" />
+  <arg name="dyn_points_topic" default="/velodyne_points_dyn_$(arg agent_no)" />
+
+  <arg name="pose_topic" default="/pose_$(arg agent_no)" />
+  <arg name="filtered_points_topic" default="/filtered_points_$(arg agent_no)" />
+  <arg name="colored_points_topic" default="/colored_points_$(arg agent_no)" />
+  <arg name="aligned_points_topic" default="/aligned_points_$(arg agent_no)" />
+  <arg name="hdl_graph_slam_topic" default="/hdl_graph_slam_$(arg agent_no)" />
+  <arg name="floor_detection_topic" default="/floor_detection_$(arg agent_no)" />
+
+  <arg name="scan_matching_odometry_topic" default="/scan_matching_odometry_$(arg agent_no)" />
+
+  <arg name="base_link_frame_id" default="robotcar_$(arg agent_no)/base_link" />
+  <arg name="map_frame_id" default="map_$(arg agent_no)" />
+  <arg name="odom_topic" default="odom_$(arg agent_no)" />
+  <arg name="odom_frame_id" default="robotcar_$(arg agent_no)/odom" />
+
+  <!-- transformation between lidar and base_link -->
+  <!--   <node pkg="tf" type="static_transform_publisher" name="lidar2base_publisher_$(arg agent_no)" args="0 0 0 0 0 0 base_link_$(arg agent_no) velodyne_$(arg agent_no) 10" /> -->
+  <!--   <node pkg="tf" type="static_transform_publisher" name="map2global_publisher_$(arg agent_no)" args="0 0 0 0 0 0 global map_$(arg agent_no) 10" /> -->
+
+  <node pkg="nodelet" type="nodelet" name="$(arg nodelet_manager)" args="manager" output="screen"/>
+
+  <!-- prefiltering_nodelet -->
+  <node pkg="nodelet" type="nodelet" name="prefiltering_nodelet_$(arg agent_no)" args="load hdl_graph_slam/PrefilteringNodelet $(arg nodelet_manager)" >
+    <param name="agent_no" value="$(arg agent_no)"/>
+    <param name="points_topic" value="$(arg left_points_topic)" />
+    <param name="base_link_frame_id" value="$(arg base_link_frame_id)" />
+    <param name="filtered_points_topic" value="$(arg filtered_points_topic)" />
+    <!-- distance filter -->
+    <param name="use_distance_filter" value="true" />
+    <param name="distance_near_thresh" value="0.1" />
+    <param name="distance_far_thresh" value="70.0" />
+    <!-- NONE, VOXELGRID, or APPROX_VOXELGRID -->
+    <param name="downsample_method" value="VOXELGRID" />
+
+    <!-- TODO: tune higher/lower resolution? -->
+    <param name="downsample_resolution" value="0.2" />
+
+    <!-- crop filter -->
+    <param name="use_crop_filter" value="false" />
+
+    <!-- NONE, RADIUS, or STATISTICAL -->
+    <param name="outlier_removal_method" value="STATISTICAL" />
+    <!-- <param name="outlier_removal_method" value="NONE" /> -->
+    <param name="statistical_mean_k" value="40" />
+    <param name="statistical_stddev" value="2.0" />
+    <param name="radius_radius" value="1.0" />
+    <param name="radius_min_neighbors" value="10" />
+  </node>
+
+  <!-- scan_matching_odometry_nodelet -->
+  <node pkg="nodelet" type="nodelet" name="scan_matching_odometry_nodelet_$(arg agent_no)" args="load hdl_graph_slam/ScanMatchingOdometryNodelet $(arg nodelet_manager)" if="$(arg enable_scan_matching_odometry)" >
+      <param name="agent_no" value="$(arg agent_no)" />
+      <param name="pose_topic" value="$(arg pose_topic)" />
+      <param name="aligned_points_topic" value="$(arg aligned_points_topic)" />
+      <param name="filtered_points_topic" value="$(arg filtered_points_topic)" />
+      <param name="base_link_frame_id" value="$(arg base_link_frame_id)" />
+      <param name="scan_matching_odometry_topic" value="$(arg scan_matching_odometry_topic)" />
+      <param name="odom_frame_id" value="$(arg odom_frame_id)" />
+      <param name="robot_odom_frame_id" value="$(arg odom_frame_id)" />
+      <param name="odom_topic" value="$(arg odom_topic)" />
+      <!-- TODO: tune keyframe distance -->
+      <param name="keyframe_delta_trans" value="4.0" />
+      <param name="keyframe_delta_angle" value="0.15" />
+      <param name="keyframe_delta_time" value="3.0" />
+      <param name="transform_thresholding" value="false" />
+      <!-- don't do scan matching but use the gps/ins pose solution as odom -->
+      <param name="use_gps_ins_odom" value="false" />
+      <param name="enable_robot_odometry_init_guess" value="true" />
+      <param name="max_acceptable_trans" value="1.0" />
+      <param name="max_acceptable_angle" value="1.0" />
+      <param name="downsample_method" value="NONE" />
+      <param name="downsample_resolution" value="0.1" />
+      <!-- ICP, GICP, NDT, GICP_OMP, NDT_OMP, FAST_GICP(recommended), FAST_VGICP, or NANO_GICP -->
+      <param name="registration_method" value="FAST_GICP" />
+      <param name="reg_num_threads" value="8" />
+      <param name="reg_transformation_epsilon" value="0.05"/>
+      <param name="reg_maximum_iterations" value="32"/>
+      <param name="reg_max_correspondence_distance" value="2.5"/>
+      <param name="reg_correspondence_randomness" value="20"/>
+
+      <!-- <param name="registration_method" value="NANO_GICP" />
+      <param name="reg_num_threads" value="0" />
+      <param name="reg_max_correspondence_distance" value="2.5"/>
+      <param name="reg_correspondence_randomness" value="20"/>
+      <param name="reg_maximum_iterations" value="32"/>
+      <param name="reg_transformation_epsilon" value="0.01"/>
+      <param name="reg_euclidean_fitness_epsilon" value="0.01"/>
+      <param name="reg_ransac_iterations" value="5"/>
+      <param name="reg_ransac_outlier_rejection_thresh" value="1.0"/> -->
+  </node>
+
+  <!-- floor_detection_nodelet -->
+  <node pkg="nodelet" type="nodelet" name="floor_detection_nodelet_$(arg agent_no)" args="load hdl_graph_slam/FloorDetectionNodelet $(arg nodelet_manager)" if="$(arg enable_floor_detection)">
+    <param name="agent_no" value="$(arg agent_no)" />
+    <param name="points_topic" value="$(arg points_topic)" />
+    <param name="filtered_points_topic" value="$(arg filtered_points_topic)" />
+    <param name="floor_detection_topic" value="$(arg floor_detection_topic)" />
+    <param name="tilt_deg" value="0.0" />
+    <!-- 1.69 m for robot car -->
+    <param name="sensor_height" value="1.69" />
+    <param name="height_clip_range" value="1.0" />
+    <param name="floor_pts_thresh" value="512" />
+    <param name="use_normal_filtering" value="true" />
+    <param name="normal_filter_thresh" value="20.0" />
+  </node>
+
+  <!-- hdl_graph_slam_nodelet -->
+  <node pkg="nodelet" type="nodelet" name="hdl_graph_slam_nodelet_$(arg agent_no)" args="load hdl_graph_slam/HdlGraphSlamNodelet $(arg nodelet_manager)">
+    <param name="agent_no" value="$(arg agent_no)" />
+    <param name="filtered_points_topic" value="$(arg filtered_points_topic)" />
+    <param name="hdl_graph_slam_topic" value="$(arg hdl_graph_slam_topic)" />
+    <param name="floor_detection_topic" value="$(arg floor_detection_topic)" />
+    <!-- this is for dynamic object detection , each object must have at least this many pts -->
+    <param name="min_points_for_detection" value="25" />
+    <!-- frame settings -->
+    <param name="map_frame_id" value="$(arg map_frame_id)" />
+    <param name="odom_frame_id" value="$(arg odom_frame_id)" />
+    <param name="odom_topic" value="$(arg odom_topic)" />
+    <!-- <param name="odom_frame_id" value="dlio/odom_node/odom" /> -->
+    <!-- optimization params -->
+    <!-- typical solvers: gn_var, gn_fix6_3, gn_var_cholmod, lm_var, lm_fix6_3, lm_var_cholmod, ... -->
+    <param name="g2o_solver_type" value="lm_var_cholmod" />
+    <param name="g2o_solver_num_iterations" value="64" />
+    <!-- constraint switches -->
+    <param name="enable_gps" value="$(arg enable_gps)" />
+    <param name="enable_imu_acceleration" value="$(arg enable_imu_acc)" />
+    <param name="enable_imu_orientation" value="$(arg enable_imu_ori)" />
+    <!-- keyframe registration params -->
+    <param name="max_keyframes_per_update" value="10" />
+    <!-- TODO: tune keyframe frequency -->
+    <param name="keyframe_delta_trans" value="8.0" />
+    <param name="keyframe_delta_angle" value="1.0" />
+    <!-- fix first node for optimization stability -> why is this not done here?
+    TODO: try to see if it breaks if this is enabled (only adaptive is relevant) -->
+    <param name="fix_first_node" value="false"/>
+    <param name="fix_first_node_stddev" value="10 10 10 1 1 1"/>
+    <param name="fix_first_node_adaptive" value="false"/>
+    <!-- edge params -->
+    <!-- GPS -->
+    <param name="gps_edge_robust_kernel" value="NONE" />
+    <param name="gps_edge_robust_kernel_size" value="1.0" />
+    <param name="gps_edge_stddev_xy" value="20.0" />
+    <param name="gps_edge_stddev_z" value="5.0" />
+    <!-- IMU orientation -->
+    <param name="imu_orientation_edge_robust_kernel" value="NONE" />
+    <param name="imu_orientation_edge_stddev" value="1.0" />
+    <!-- IMU acceleration (gravity vector) -->
+    <param name="imu_acceleration_edge_robust_kernel" value="NONE" />
+    <param name="imu_acceleration_edge_stddev" value="1.0" />
+    <!-- ground plane -->
+    <param name="floor_edge_robust_kernel" value="NONE" />
+    <param name="floor_edge_stddev" value="10.0" />
+    <!-- scan matching -->
+    <!-- robust kernels: NONE, Cauchy, DCS, Fair, GemanMcClure, Huber, PseudoHuber, Saturated, Tukey, Welsch -->
+    <param name="odometry_edge_robust_kernel" value="NONE" />
+    <param name="odometry_edge_robust_kernel_size" value="1.0" />
+    <param name="loop_closure_edge_robust_kernel" value="Huber" />
+    <param name="loop_closure_edge_robust_kernel_size" value="1.0" />
+    <param name="use_const_inf_matrix" value="false" />
+    <param name="const_stddev_x" value="0.5" />
+    <param name="const_stddev_q" value="0.1" />
+    <param name="var_gain_a" value="20.0" />
+    <param name="min_stddev_x" value="0.1" />
+    <param name="max_stddev_x" value="5.0" />
+    <param name="min_stddev_q" value="0.05" />
+    <param name="max_stddev_q" value="0.2" />
+    <!-- update params -->
+    <param name="graph_update_interval" value="3.0" />
+    <param name="map_cloud_update_interval" value="10.0" />
+    <!-- map cloud resolution unused -->
+    <param name="map_cloud_resolution" value="0.1" />
+  </node>
+
+  <!-- <node pkg="hdl_graph_slam" type="map2odom_publisher.py" name="map2odom_publisher_$(arg agent_no)" >
+    <param name="agent_no" value="$(arg agent_no)" />
+  </node> -->
+  <node pkg="hdl_graph_slam" type="odom2baselink_publisher.py" name="odom2baselink_publisher_$(arg agent_no)" >
+    <param name="agent_no" value="$(arg agent_no)" />
+  </node>
+</launch>

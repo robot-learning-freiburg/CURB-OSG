@@ -1,0 +1,37 @@
+<?xml version="1.0"?>
+<launch>
+
+  <env name="ROSCONSOLE_CONFIG_FILE"
+       value="$(find curb_launchers)/config/rosconsole.conf"/>
+  <env name="ROSCONSOLE_FORMAT" value="[${severity}] ${message}" />
+
+  <arg name="loop" default="159-7" />
+
+  <arg name="keepalive" default="true" />
+
+  <node pkg="loop_debugger" type="loop_debugger_node" name="loop_debugger_node" output="screen">
+    <param name="loop_debug_output" value="$(find hdl_graph_slam)/loop_debug/" />
+    <param name="target_loop" value="$(arg loop)" />
+    <param name="keepalive" value="$(arg keepalive)" />
+
+
+    <param name="registration_method" value="FAST_GICP" />
+
+    <param name="fitness_score_max_range" value="5.0" />
+
+    <!-- higher epsilon: faster convergence but lower accuracy -->
+    <param name="reg_transformation_epsilon" value="0.001" />
+
+    <param name="reg_num_threads" value="8" />
+
+    <!-- The maximum distance threshold between two correspondent points in source
+    and target. If the distance is larger than this threshold, the points will be
+    ignored in the alignment process.  -->
+    <param name="reg_max_correspondence_distance" value="10.0"/>
+
+    <param name="reg_maximum_iterations" value="32"/>
+
+    <!-- how many correspondences to consider -->
+    <param name="reg_correspondence_randomness" value="10"/>
+  </node>
+</launch>

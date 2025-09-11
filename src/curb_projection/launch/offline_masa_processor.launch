@@ -1,0 +1,27 @@
+<launch>
+
+  <arg name="dataset_root" default="/workspaces/collaborative-scene-graphs/data/radar-robotcar/2019-01-11-13-24-51-radar-oxford-10k" />
+  <arg name="camera_name" default="stereo/left" />
+
+  <arg name="models_dir" default="$(find curb_projection)/intrinsics" />
+  <arg name="masa_checkpoint" default="$(find curb_projection)/saved_models/masa_models/gdino_masa.pth" />
+  <arg name="masa_config" default="$(find curb_projection)/config/masa/masa-gdino/masa_gdino_swinb_inference_for_curb.py" />
+  <arg name="masa_prompt" default="vehicle" />
+  <arg name="use_sam" default="true" />
+  <arg name="sam_checkpoint" default="$(find curb_projection)/saved_models/pretrain_weights/sam_vit_h_4b8939.pth" />
+
+
+  <node pkg="curb_projection" type="offline_masa_processor" name="offline_masa_processor" required="true" output="screen">
+    <param name="input_dir" value="$(arg dataset_root)/$(arg camera_name)" />
+    <param name="output_dir" value="$(arg dataset_root)/masa_preprocessed/$(arg camera_name)" />
+    <param name="models_dir" value="$(arg models_dir)" />
+    <param name="masa_checkpoint" value="$(arg masa_checkpoint)" />
+    <param name="masa_config" value="$(arg masa_config)" />
+    <param name="masa_prompt" value="$(arg masa_prompt)" />
+    <param name="score_threshold" value="0.15" /> <!-- very low threshold here, we filter later -->
+    <param name="use_sam" value="$(arg use_sam)" />
+    <param name="sam_checkpoint" value="$(arg sam_checkpoint)" />
+    <param name="frameskip" value="1" />  <!-- only process every Nth frame -->
+  </node>
+
+</launch>

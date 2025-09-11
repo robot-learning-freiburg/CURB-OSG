@@ -1,0 +1,13 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "ros",
+			"command": "roscore",
+			"problemMatcher": [
+				"$roscore"
+			],
+			"label": "roscore: roscore"
+		}
+	]
+}

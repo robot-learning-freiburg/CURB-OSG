@@ -1,0 +1,26 @@
+<launch>
+
+  <arg name="keyframes_topic" default="/optimized_keyframes"/>
+  <arg name="semantic_points_topic" default="/pcl_rgb"/>
+
+  <node name="curb_scene_graph_node" pkg="curb_scene_graph" type="curb_scene_graph_node" output="screen" clear_params="true" required="true" >
+    <param name="models_dir" value="$(find curb_projection)/intrinsics" />
+
+    <!-- OSM gt datasets for eval -->
+    <param name="dataset_dir" value="$(find curb_scene_graph)/eval_datasets/" />
+    
+    <param name="scenegraphs_dir" value="$(find curb_scene_graph)/scenegraphs/" />
+
+    <!-- Load parameters -->
+    <rosparam file="$(find curb_scene_graph)/config/params.yaml" command="load"/>
+
+    <!-- Subscriptions -->
+    <remap from="keyframes" to="$(arg keyframes_topic)"/>
+    <remap from="semantic_points" to="$(arg semantic_points_topic)"/>
+
+    <!-- Publications -->
+    <remap from="debug_markers" to="scene_graph/debug_markers"/>
+    <remap from="lane_graph_markers" to="scene_graph/lane_graph_markers"/>
+    
+  </node>
+</launch>

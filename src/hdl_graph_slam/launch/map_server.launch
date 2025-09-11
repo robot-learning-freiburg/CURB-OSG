@@ -1,0 +1,116 @@
+<?xml version="1.0"?>
+<launch>
+
+  <env name="ROSCONSOLE_CONFIG_FILE"
+       value="$(find curb_launchers)/config/rosconsole.conf"/>
+  <env name="ROSCONSOLE_FORMAT" value="[${severity}] ${message}" />
+
+  <!-- simulation time control -->
+  <param name="/use_sim_time" value="true" />
+
+  <!-- arguments -->
+  <arg name="nodelet_manager" default="map_server_nodelet_manager" />
+  <arg name="map_server_topic" default="/map_server" />
+  <arg name="dynamic_observation_topic" default="/masa_observations" />
+
+  <arg name="map_frame_id" default="world" />
+
+  <arg name="remove_dynamic_objects" default="false" />
+
+  <node pkg="nodelet" type="nodelet" name="$(arg nodelet_manager)" args="manager" output="screen"/>
+
+  <!-- map server_nodelet -->
+  <node pkg="nodelet" type="nodelet" name="map_server" args="load hdl_graph_slam/MapServerNodelet $(arg nodelet_manager)" required="true">
+        <!-- launch-prefix="gdb -ex run - -args"> -->
+        <!-- launch-prefix="valgrind - -leak-check=full - -show-leak-kinds=all -s" -->
+    <param name="map_server_topic" value="$(arg map_server_topic)" />
+    <param name="map_frame_id" value="$(arg map_frame_id)" />
+    <param name="dynamic_observation_topic" value="$(arg dynamic_observation_topic)" />
+    <param name="observation_filter_topic" value="/observation_filter" />
+    <!-- This is just the vertical offset for keyframe viz markers -->
+    <param name="height_offset_keyframes" value="0.0" />
+    <param name="exit_when_map_explored" value="false" type="bool"/>
+<!--     <param name="exit_number_of_map_points" value="140000.0" /> -->
+<!--     <param name="exit_number_of_map_points" value="2000.0" /> -->
+    <param name="exit_number_of_map_points" value="900000.0" />
+    <param name="exit_iterations" value="5" />
+
+    <!-- optimization params -->
+    <!-- typical solvers: gn_var, gn_fix6_3, gn_var_cholmod, lm_var, lm_fix6_3, lm_var_cholmod, ... -->
+    <param name="g2o_solver_type" value="lm_var_cholmod" />
+    <param name="g2o_solver_num_iterations" value="512" />
+
+    <!-- node merging on/off -->
+    <param name="node_merging" value="false" />
+
+    <!-- loop closure params -->
+    <!-- empty string = no debug output -->
+    <param name="loop_debug_output" value="" />
+    <!-- <param name="loop_debug_output" value="$(find hdl_graph_slam)/loop_debug/" /> -->
+    <param name="loop_detection" value="true" />
+    <param name="remove_dyn_pts" value="$(arg remove_dynamic_objects)" />
+
+    <param name="distance_thresh" value="25.0" />
+    <!-- accum dist thresh: same agent, nodes have to have at least this much trajectory between them -->
+    <param name="accum_distance_thresh" value="100.0" />
+    <!-- minimum traveled distance between loop closures -->
+    <param name="min_edge_interval" value="20.0" />
+    <!-- Fitness "Score" = accumulated NN distance, so lower threshold means more restricted -->
+    <param name="fitness_score_thresh" value="0.7" />
+    <!-- points that have no NN within this range will not count towards score.
+    This is to deal with partial occlusions in one of the PC. -->
+    <param name="fitness_score_max_range" value="5.0" />
+
+    <param name="registration_method" value="FAST_GICP" />
+    <!-- higher epsilon: faster convergence but lower accuracy -->
+    <param name="reg_transformation_epsilon" value="0.001" />
+    <param name="reg_num_threads" value="8" />
+    <!-- The maximum distance threshold between two correspondent points in source
+    and target. If the distance is larger than this threshold, the points will be
+    ignored in the alignment process.  -->
+    <param name="reg_max_correspondence_distance" value="10.0"/>
+    <param name="reg_maximum_iterations" value="32"/>
+    <!-- how many correspondences to consider -->
+    <param name="reg_correspondence_randomness" value="10"/>
+    <!-- Set the maximum allowed Euclidean error between two consecutive steps in
+    the ICP loop, before the algorithm is considered to have converged. -->
+    <!-- <param name="reg_euclidean_fitness_epsilon" value="0.02"/> -->
+    <!-- <param name="reg_ransac_iterations" value="5"/> -->
+    <!-- <param name="reg_ransac_outlier_rejection_thresh" value="0.5"/> -->
+
+    <!-- Scan Context parameters -->
+    <param name="scan_context_matching" value="true" />
+    <param name="sc_filter_size" value="0.4"/>
+    <param name="sc_descriptor_distance" value="0.5"/>
+    <param name="distance_thresh_sc" value="100000"/>
+    <param name="sc_max_radius" value="80"/>
+
+
+
+    <!-- robust kernels: NONE, Cauchy, DCS, Fair, GemanMcClure, Huber, PseudoHuber, Saturated, Tukey, Welsch -->
+    <!-- <param name="odometry_edge_robust_kernel" value="NONE" /> -->
+    <!-- <param name="odometry_edge_robust_kernel_size" value="1.0" /> -->
+    <param name="loop_closure_edge_robust_kernel" value="Huber" />
+    <param name="loop_closure_edge_robust_kernel_size" value="1.0" />
+    <param name="use_const_inf_matrix" value="false" />
+    <param name="const_stddev_x" value="0.5" />
+    <param name="const_stddev_q" value="0.1" />
+    <param name="var_gain_a" value="20.0" />
+    <param name="min_stddev_x" value="0.1" />
+    <param name="max_stddev_x" value="5.0" />
+    <param name="min_stddev_q" value="0.05" />
+    <param name="max_stddev_q" value="0.2" />
+
+    <!-- update params -->
+    <param name="graph_update_interval" value="3.0" />
+    <param name="map_cloud_update_interval" value="10.0" />
+    <param name="map_cloud_resolution" value="0.4" />
+    <param name="map_cloud_time_shading" value="true" />
+
+    <!-- marker cfg -->
+    <param name="marker_z_offset" value="-50.0" />
+    <param name="marker_scale_factor" value="2.0" />
+
+  </node>
+
+</launch>

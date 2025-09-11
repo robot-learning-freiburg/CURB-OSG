@@ -1,0 +1,22 @@
+<launch>
+
+  <arg name="keyframes_topic" default="/agent_keyframes" />
+  <arg name="models_dir" default="$(find curb_projection)/intrinsics" />
+  <arg name="masa_viz_topic" default="masa_viz" />
+  <!-- Keep the prompt here the same as was used in the preprocessor -->
+  <arg name="masa_prompt" default="vehicle" />
+  <arg name="use_sam" default="true" />
+
+
+  <node pkg="curb_projection" type="masa_node_precomputed" name="masa_node_precomputed" required="true" output="screen">
+    <param name="keyframes_topic" value="$(arg keyframes_topic)" />
+    <param name="models_dir" value="$(arg models_dir)" />
+    <param name="stereo_width" value="1280" />
+    <param name="stereo_height" value="960" />
+    <param name="masa_viz_topic" value="$(arg masa_viz_topic)" />
+    <param name="masa_prompt" value="$(arg masa_prompt)" />
+    <param name="score_threshold" value="0.4" />
+    <param name="use_sam" value="$(arg use_sam)" />
+  </node>
+
+</launch>

@@ -1,0 +1,28 @@
+<launch>
+
+  <arg name="keyframes_topic" default="/optimized_keyframes"/>
+  <arg name="semantic_points_topic" default="/pcl_rgb"/>
+
+  <node pkg="rosbag" type="play" name="rosbag" args="--clock $(find curb_launchers)/data/2025-01-24-single-agent-keyframes.bag" output="screen" />
+
+  <node pkg="curb_helpers" type="draw-gt-trajectory.py" name="draw_gt_trajectory" />
+
+  <node name="curb_scene_graph_node" pkg="curb_scene_graph" type="curb_scene_graph_node" output="screen" clear_params="true" required="true" >
+    <param name="models_dir" value="$(find curb_projection)/intrinsics" />
+
+    <!-- OSM gt datasets for eval -->
+    <param name="dataset_dir" value="$(find curb_scene_graph)/eval_datasets/" />
+
+    <!-- Load parameters -->
+    <rosparam file="$(find curb_scene_graph)/config/params-road-graph-figure.yaml" command="load"/>
+
+    <!-- Subscriptions -->
+    <remap from="keyframes" to="$(arg keyframes_topic)"/>
+    <remap from="semantic_points" to="$(arg semantic_points_topic)"/>
+
+    <!-- Publications -->
+    <remap from="debug_markers" to="scene_graph/debug_markers"/>
+    <remap from="lane_graph_markers" to="scene_graph/lane_graph_markers"/>
+    
+  </node>
+</launch>

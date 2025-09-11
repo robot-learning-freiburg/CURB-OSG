@@ -1,0 +1,134 @@
+#!/usr/bin/python3
+
+import ros
+import rospy
+import pickle
+import os
+from std_msgs.msg import Empty
+from visualization_msgs.msg import Marker, MarkerArray, InteractiveMarkerControl
+from geometry_msgs.msg import Point
+from interactive_markers.interactive_marker_server import *
+from interactive_markers.menu_handler import *
+from curb_sg_eval.utils import plot_ways
+
+
+class IntersectionsManualFilter:
+    def __init__(self):
+        self.dataset_dir: str = rospy.get_param("~dataset_dir")
+        self.import_data()
+        self.done_listener = rospy.Subscriber(
+            "done_selecting_intersections", Empty, self.done_callback
+        )
+        self.clicked_marker_id = 0
+        self.ways_marker_pub = rospy.Publisher(
+            "osm_ways", MarkerArray, latch=True, queue_size=1
+        )
+        plot_ways(self.ways, self.ways_marker_pub)
+        
+        self.filter_intersections()
+
+    def export_data(self):
+        rospy.loginfo(f"writing selected intersections to {self.dataset_dir}")
+        output_pickle_path = os.path.join(self.dataset_dir, "selected_intersections.pkl")
+        with open(output_pickle_path, "wb") as f:
+            pickle.dump(self.clicked_intersections, f)
+        rospy.loginfo(f"selected intersections: {self.clicked_intersections}")
+        rospy.loginfo(f"Exported selected intersections to {output_pickle_path}")
+
+    def import_data(self):
+        assert os.path.exists(self.dataset_dir), "Dataset directory does not exist"
+        rospy.loginfo(f"Importing from {self.dataset_dir}")
+
+        ways_pickle_path = os.path.join(self.dataset_dir, "ways.pkl")
+        with open(ways_pickle_path, "rb") as f:
+            self.ways = pickle.load(f)
+        rospy.loginfo(f"Imported ways from {ways_pickle_path}")
+
+        intersections_pickle_path = os.path.join(self.dataset_dir, "all_intersections.pkl")
+        with open(intersections_pickle_path, "rb") as f:
+            self.intersections = pickle.load(f)
+        rospy.loginfo(f"Imported intersections from {intersections_pickle_path}")
+
+    def filter_intersections(self):
+        self.marker_pub = rospy.Publisher(
+            "clicked_intersections", MarkerArray, queue_size=1, latch=True
+        )
+        self.clicked_intersections = []
+        self.server = InteractiveMarkerServer("interactive_intersections", q_size=100)
+        self.menu_handler = MenuHandler()
+
+        for idx, intersection in enumerate(self.intersections):
+            marker = Marker()
+            marker.header.frame_id = "world"
+            marker.type = Marker.SPHERE
+            marker.action = Marker.ADD
+            marker.pose.position.x = intersection[0]
+            marker.pose.position.y = intersection[1]
+            rospy.loginfo(f"marker at {marker.pose.position.x}, {marker.pose.position.y}")
+            marker.pose.position.z = 0
+            marker.scale.x = 12.0
+            marker.scale.y = 12.0
+            marker.scale.z = 12.0
+            marker.color.a = 1.0
+            marker.color.r = 1.0
+            marker.color.g = 0.0
+            marker.color.b = 0.0
+
+            int_marker = InteractiveMarker()
+            int_marker.header.frame_id = "world"
+            int_marker.name = f"intersection_{idx}"
+            int_marker.description = f"Intersection {idx}"
+            int_marker.pose.position = marker.pose.position
+            int_marker.scale = 1
+
+            control = InteractiveMarkerControl()
+            control.interaction_mode = InteractiveMarkerControl.BUTTON
+            control.always_visible = True
+            control.markers.append(marker)
+            int_marker.controls.append(control)
+
+            self.server.insert(int_marker, self.process_feedback)
+            self.menu_handler.apply(self.server, int_marker.name)
+
+        self.server.applyChanges()
+        rospy.spin()
+    
+    def done_callback(self, _):
+        rospy.loginfo("Done selecting intersections")
+        self.export_data()
+
+    def process_feedback(self, feedback: InteractiveMarkerFeedback):
+        if feedback.event_type == InteractiveMarkerFeedback.BUTTON_CLICK:
+            clicked_point = feedback.pose.position
+            self.clicked_intersections.append((clicked_point.x, clicked_point.y))
+            rospy.loginfo(
+                f"Clicked intersection at: ({clicked_point.x}, {clicked_point.y})"
+            )
+
+            marker = Marker()
+            marker.header.frame_id = "world"
+            marker.type = Marker.SPHERE
+            marker.action = Marker.ADD
+            marker.id = self.clicked_marker_id
+            self.clicked_marker_id += 1
+            marker.pose.position = clicked_point
+            marker.pose.position.z -= 12.0
+            marker.scale.x = 12.0
+            marker.scale.y = 12.0
+            marker.scale.z = 12.0
+            marker.color.a = 1.0
+            marker.color.r = 0.0
+            marker.color.g = 1.0
+            marker.color.b = 0.0
+
+            marker_array = MarkerArray()
+            marker_array.markers.append(marker)
+            self.marker_pub.publish(marker_array)
+
+            self.last_update = rospy.Time.now()
+
+
+if __name__ == "__main__":
+    rospy.init_node("osm_handselect_intersections")
+    node = IntersectionsManualFilter()
+    rospy.spin()

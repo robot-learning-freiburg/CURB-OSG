@@ -1,0 +1,93 @@
+curb:
+  num_agents: 3
+
+  scene_graph:
+    root_pos: [0.0, 0.0, 0.0]
+    rgba: [0.4, 0.4, 0.4, 1.0]
+
+    edge_rgba: [0.4, 0.4, 0.4, 0.4]
+    edge_width: 0.8
+
+    root_layer_offset: -500.0
+    road_graph_offset: -400.0
+    landmarks_offset: -310.0
+    dynamic_objects_offset_parking: -200.0
+    dynamic_objects_offset_moving: -200.0
+
+    # choose "opengraph" or "baseline"
+    road_graph_method: "opengraph"
+
+  dynamic_objects:
+    scale_parking: 4.5
+    scale_moving: 4.0
+    rgba_parking: [0.0, 0.0, 1.0, 0.7]
+    rgba_moving: [1.0, 0.0, 0.0, 0.7]
+
+  landmarks:
+    # overlap ratio: min overlap btw aabbs for association
+    overlap_ratio: 0.01
+
+    # if adding targets, make sure to set params below!
+    landmark_targets: ["tree", "traffic sign", "traffic light"]
+
+    # association by distance: disabled for now
+    # assoc_radius:
+    #   tree: 1.5
+    #   "traffic sign": 1.0
+    #   "traffic light": 1.0
+
+    min_obs_per_landmark:
+      tree: 1
+      "traffic sign": 1
+      "traffic light": 1
+
+    objects_alpha: 1.0
+
+    marker_scale_factor: 10.0
+
+    show_scores: False
+
+  road_graph:
+    # --- intersection detection
+    # radius for trajectory nodes considered neighbors for the local disfluency
+    r_dis: 25.0
+    # +- how many nodes to search along the trajectory to find neighbors
+    neighbor_search_window: 6
+    # disfluency threshold for intersection detection
+    disfluency_thresh: 0.4
+
+    # --- intersection point clustering (DBSCAN)
+    # https://scikit-learn.org/dev/modules/generated/sklearn.cluster.DBSCAN.html
+
+    # The maximum distance between two samples for one to be considered as in
+    # the neighborhood of the other
+    dbscan_eps: 15
+
+    # The number of samples (or total weight) in a neighborhood for a point to
+    # be considered as a core point
+    dbscan_min_samples: 2
+
+    # --- plotting
+    plot_disfluencies: false
+    disfluency_marker_height: -20.0
+    disfluency_marker_size: 4.0
+
+    road_graph_alpha: 1.0
+    intersection_color: [0.91, 0.741, 0.20]
+    road_color: [0.0, 0.388, 0.396, 1.0]
+    plot_intersection_ids: false
+    intersection_id_height: -15.0
+    intersection_id_scale: 5.0
+
+    intersection_scale: 15.0
+    road_scale: 5.0
+
+  osm_gt:
+    all_intersection_color: [0.733, 0.141, 0.141, 1.0]
+    selected_intersection_color: [0.118, 0.592, 0.067, 1.0]
+    intersection_scale: 24.0
+    ways_color: [0.553, 0.553, 0.553, 1.0]
+    ways_scale: 5.0
+    all_isect_z: 0.0
+    selected_isect_z: -6.0
+    ways_z: 0.0

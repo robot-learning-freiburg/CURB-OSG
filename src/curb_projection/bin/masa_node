@@ -1,0 +1,532 @@
+#!/usr/bin/env python3
+import os
+import sys
+
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, project_root)
+
+import argparse
+import gc
+import resource
+import warnings
+from functools import partial
+from threading import Semaphore
+
+import clip
+import cv2
+import message_filters
+import mmcv
+import numpy as np
+import PIL.Image
+import regex
+import ros_numpy
+import rospy
+import torch
+import tqdm
+from cv_bridge import CvBridge
+from geometry_msgs.msg import Point, PointStamped, Quaternion
+from mmcv.ops.nms import batched_nms
+from mmcv.transforms import Compose
+from mmdet.apis import init_detector
+from mmdet.registry import VISUALIZERS, MODELS
+from mmengine.utils import track_iter_progress
+from mmengine.config import Config
+from sensor_msgs.msg import Image
+from tf import LookupException, TransformListener
+from torch.multiprocessing import Pool, set_start_method
+from vision_msgs.msg import BoundingBox2D
+from visualization_msgs.msg import Marker, MarkerArray
+from sensor_msgs.msg import PointCloud2
+import sensor_msgs.point_cloud2 as pcl2
+
+import masa
+from curb_projection.camera_model import CameraModel
+from curb_projection.msg import Keyframe_msg
+from curb_projection.msg import TrackedObjectObs as TrackedObjectObs_msg
+from masa.apis import (
+    build_test_pipeline,
+    inference_detector,
+    inference_masa,
+    init_masa,
+)
+from masa.models.sam import SamPredictor, sam_model_registry
+from masa.utils import filter_and_update_tracks
+
+warnings.filterwarnings("ignore")
+
+# Ensure the right start method for multiprocessing
+try:
+    set_start_method("spawn")
+except RuntimeError:
+    pass
+
+
+def set_file_descriptor_limit(limit):
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (limit, hard))
+
+
+# Set the file descriptor limit to 65536
+set_file_descriptor_limit(65536)
+
+
+def visualize_frame(args, visualizer, frame, track_result, frame_idx, fps=None):
+    visualizer.add_datasample(
+        name="video_" + str(frame_idx),
+        image=frame[:, :, ::-1],
+        data_sample=track_result[0],
+        draw_gt=False,
+        show=False,
+        out_file=None,
+        pred_score_thr=args.score_thr,
+        fps=fps,
+    )
+    frame = visualizer.get_image()
+    gc.collect()
+    return frame
+
+
+def parse_args():
+
+    parser = argparse.ArgumentParser(description="MASA ROS node")
+    parser.add_argument("--det_config", help="Detector Config file")
+    parser.add_argument("--masa_config", help="Masa Config file")
+    parser.add_argument("--det_checkpoint", help="Detector Checkpoint file")
+    parser.add_argument("--masa_checkpoint", help="Masa Checkpoint file")
+    parser.add_argument("--device", default="cuda:0", help="Device used for inference")
+    parser.add_argument(
+        "--score-thr", type=float, default=0.2, help="Bbox score threshold"
+    )
+    parser.add_argument("--texts", help="text prompt")
+    parser.add_argument("--line_width", type=int, default=5, help="Line width")
+    parser.add_argument(
+        "--unified",
+        action="store_true",
+        help="Use unified model, which means the masa adapter is built upon the detector model.",
+    )
+    parser.add_argument(
+        "--detector_type", type=str, default="mmdet", help="Choose detector type"
+    )
+    parser.add_argument("--fp16", action="store_true", help="Activation fp16 mode")
+    parser.add_argument(
+        "--no-post", action="store_true", help="Do not post-process the results "
+    )
+    parser.add_argument("--show_fps", action="store_true", help="Visualize the fps")
+    parser.add_argument(
+        "--sam_mask",
+        action="store_true",
+        help="Use SAM to generate mask for segmentation tracking",
+    )
+    parser.add_argument(
+        "--sam_path",
+        type=str,
+        default="saved_models/pretrain_weights/sam_vit_h_4b8939.pth",
+        help="Default path for SAM models",
+    )
+    parser.add_argument(
+        "--sam_type", type=str, default="vit_h", help="Default type for SAM models"
+    )
+    parser.add_argument(
+        "--wait-time",
+        type=float,
+        default=1,
+        help="The interval of show (s), 0 is block",
+    )
+    args = parser.parse_args("")
+    return args
+
+
+class TrackedObject:
+    def __init__(
+        self,
+        instance_id: int,
+    ):
+        """Represents a tracked object as a sequence of observations. Points is
+        the point cloud of the object as Nx3 numpy array.
+        """
+        self.centroids = []
+        self.avg_clip_feature = None
+        self.color = list(np.random.choice(range(256), size=3))
+        self.instance_id = instance_id
+        self.pointclouds = []
+        self.observing_agent: int
+        self.keyframe_ids = []
+        self.distance_thresh = 5
+
+    def add_observation(
+        self,
+        centroid: PointStamped,
+        clip_feature: np.array,
+        points: np.array,
+        agent_id: int,
+        keyframe_id: int,
+    ):
+        # ignore if distance to last obs is too long
+        if len(self.centroids) >= 1:
+            keyframe_dist = abs(self.keyframe_ids[-1] - keyframe_id)
+            if keyframe_dist > self.distance_thresh:
+                return
+
+        if self.avg_clip_feature is None:
+            self.avg_clip_feature = clip_feature
+        else:
+            # online average formula
+            n = len(self.centroids)
+            self.avg_clip_feature += (clip_feature - self.avg_clip_feature) / n
+
+        self.centroids.append(centroid)
+        self.pointclouds.append(points)
+        self.observing_agent = agent_id
+        self.keyframe_ids.append(keyframe_id)
+
+    def get_observation_msg(self, obs_idx: int) -> TrackedObjectObs_msg:
+        msg = TrackedObjectObs_msg()
+        # TODO: time of observation as stamp?
+        msg.header.stamp = rospy.Time.now()
+        msg.header.frame_id = self.centroids[obs_idx].header.frame_id
+
+        msg.instance_id = self.instance_id
+
+        msg.centroid = self.centroids[obs_idx].point
+        msg.observing_agent_id = self.observing_agent
+        msg.keyframe_id = self.keyframe_ids[obs_idx]
+
+        msg.cloud = pcl2.create_cloud_xyz32(msg.header, self.pointclouds[obs_idx])
+
+        return msg
+
+    def publish_latest_obs(self, obs_pub: rospy.Publisher):
+        assert (
+            len(self.centroids) >= 1
+        ), "Attempting to publish observation of empty TrackedObject"
+
+        msg = self.get_observation_msg(len(self.centroids) - 1)
+        obs_pub.publish(msg)
+
+    def get_marker(self, tf_listener: TransformListener) -> Marker:
+        m = Marker()
+        m.color.a = 1.0
+        m.color.r = self.color[0]
+        m.color.g = self.color[1]
+        m.color.b = self.color[2]
+        m.header.stamp = rospy.Time.now()
+        m.header.frame_id = "world"
+        m.action = Marker.ADD
+        m.id = (self.observing_agent * 1000000) + self.instance_id
+        m.pose.orientation = Quaternion(0,0,0,1)
+
+        for centroid in self.centroids:
+            try:
+                pt = centroid
+                pt.header.stamp = rospy.Time(0)
+                m.points.append(tf_listener.transformPoint("world", pt).point)
+            except LookupException:
+                rospy.logerr("could not find frame " + centroid.header.frame_id)
+                break
+
+        if len(m.points) == 0:
+            rospy.logdebug(
+                f"MASA node couldn't visualize object {self.instance_id}, no transforms found"
+            )
+            return None
+        elif len(m.points) == 1:
+            m.type = Marker.SPHERE
+            m.scale.x = 1.0
+            m.scale.y = 1.0
+            m.scale.z = 1.0
+            m.pose.position = m.points[0]
+            m.points.clear()
+        else:
+            m.type = Marker.LINE_STRIP
+            m.scale.x = 0.3
+        return m
+
+
+class MasaNode:
+    def __init__(self, args):
+        self.args = args
+        # build the model from a config file and a checkpoint file
+        self.config = Config.fromfile(args.masa_config)
+        self.masa_model = init_masa(
+            self.config, args.masa_checkpoint, device=args.device
+        )
+
+        if args.sam_mask:
+            print("Loading SAM model...")
+            self.device = args.device
+            self.sam_model = sam_model_registry[args.sam_type](args.sam_path)
+            self.sam_predictor = SamPredictor(self.sam_model.to(self.device))
+
+        #### parsing the text input
+        self.texts = args.texts
+        assert self.texts is not None
+        self.masa_test_pipeline = build_test_pipeline(
+            self.masa_model.cfg, with_text=True
+        )
+        self.masa_model.cfg.visualizer["texts"] = self.texts
+
+        # init CLIP
+        self.clip_model, self.clip_preprocess = clip.load("ViT-B/16")
+
+        # init visualizer
+        self.masa_model.cfg.visualizer["line_width"] = args.line_width
+        if args.sam_mask:
+            self.masa_model.cfg.visualizer["alpha"] = 0.5
+        self.visualizer = VISUALIZERS.build(self.masa_model.cfg.visualizer)
+
+        self.frame_idxs = [0, 0, 0]
+        self.bridge = CvBridge()
+
+        # prepare camera model
+        models_dir = rospy.get_param("~models_dir")
+        self.camera_model = CameraModel(models_dir, "stereo/left")
+
+        self.crop_lower_px = 190
+        self.img_height = int(rospy.get_param("~stereo_height")) - self.crop_lower_px
+        self.img_width = int(rospy.get_param("~stereo_width"))
+
+        self.tf_listener = TransformListener()
+
+        # align keyframes with camera images, with approximate time sync, one per agent
+        img_topic_postfix = rospy.get_param("~image_topic")
+        keyframes_topic = rospy.get_param("~keyframes_topic")
+        masa_viz_topic = rospy.get_param("~masa_viz_topic")
+        self.approx_time_syncs = []
+        self.img_pubs: rospy.Publisher = []
+        for agent_no in range(3):
+            kf_sub = message_filters.Subscriber(keyframes_topic, Keyframe_msg)
+            image_sub = message_filters.Subscriber(f"/robotcar_{agent_no}/{img_topic_postfix}", Image)
+            self.approx_time_syncs.append(message_filters.ApproximateTimeSynchronizer(
+                [kf_sub, image_sub], queue_size=64, slop=0.6
+            ))
+            # pass the agent no to callback by fixing the first argument
+            self.approx_time_syncs[-1].registerCallback(partial(self.keyframe_callback, agent_no))
+            self.img_pubs.append(rospy.Publisher(f"/robotcar_{agent_no}/{masa_viz_topic}", Image, queue_size=1))
+
+        # publishers
+        self.marker_pub = rospy.Publisher("masa_markers", MarkerArray, queue_size=1)
+        self.observations_pub = rospy.Publisher(
+            "masa_observations", TrackedObjectObs_msg, queue_size=128
+        )
+        self.marker_timer = rospy.timer.Timer(
+            rospy.Duration(5.0), self.show_observations
+        )
+
+        # dict to map instance ids to TrackedObject
+        self.tracked_obj_store = dict()
+
+        # thread synchronization
+        self.masa_semaphore = Semaphore()
+        self.sam_semaphore = Semaphore()
+        self.tracked_obj_store_sem = Semaphore()
+
+    def keyframe_callback(self, agent_no: int, keyframe_msg: Keyframe_msg, image_msg: Image):
+        # todo: much of the code in this callback is duplicated in maskclip_mapping_node. Refactor?
+        if keyframe_msg.agent_no != agent_no:
+            return
+
+        img_cv = self.bridge.imgmsg_to_cv2(image_msg, desired_encoding="rgb8")
+        img_rectified = self.camera_model.undistort(img_cv)
+        img_rectified_cropped = img_rectified[: -self.crop_lower_px]
+
+        with self.masa_semaphore:
+            self.masa_model.tracker.set_state(agent_no)
+            track_result = inference_masa(
+                self.masa_model,
+                img_rectified_cropped,
+                frame_id=self.frame_idxs[agent_no],
+                video_len=-1,
+                test_pipeline=self.masa_test_pipeline,
+                text_prompt=self.texts,
+                fp16=self.args.fp16,
+                detector_type=self.args.detector_type,
+                show_fps=False,
+            )
+
+        if "masks" in track_result[0].pred_track_instances:
+            if len(track_result[0].pred_track_instances.masks) > 0:
+                track_result[0].pred_track_instances.masks = torch.stack(
+                    track_result[0].pred_track_instances.masks, dim=0
+                )
+                track_result[0].pred_track_instances.masks = (
+                    track_result[0].pred_track_instances.masks.cpu().numpy()
+                )
+
+        track_result[0].pred_track_instances.bboxes = track_result[
+            0
+        ].pred_track_instances.bboxes.to(torch.float32)
+
+        if args.sam_mask:
+            # generate SAM mask
+            with self.sam_semaphore:
+                track_result = track_result.to(self.device)
+                track_result[0].pred_track_instances.instances_id = track_result[0].pred_track_instances.instances_id.to(self.device)
+                track_result[0].pred_track_instances = track_result[0].pred_track_instances[(track_result[0].pred_track_instances.scores.float() > args.score_thr).to(self.device)]
+                input_boxes = track_result[0].pred_track_instances.bboxes
+                if len(input_boxes) == 0:
+                    return
+                self.sam_predictor.set_image(img_rectified_cropped)
+                transformed_boxes = self.sam_predictor.transform.apply_boxes_torch(
+                    input_boxes, img_rectified_cropped.shape[:2]
+                )
+                masks, _, _ = self.sam_predictor.predict_torch(
+                    point_coords=None,
+                    point_labels=None,
+                    boxes=transformed_boxes,
+                    multimask_output=False,
+                )
+                track_result[0].pred_track_instances.masks = masks.squeeze(1).cpu().numpy()
+
+
+        # only compute frame visualization if we have subscribers
+        if self.img_pubs[agent_no].get_num_connections() > 0:
+            viz_frame = visualize_frame(
+                self.args,
+                self.visualizer,
+                img_rectified_cropped,
+                track_result.to("cpu"),
+                self.frame_idxs[agent_no],
+            )
+            viz_msg = self.bridge.cv2_to_imgmsg(viz_frame)
+            self.img_pubs[agent_no].publish(viz_msg)
+
+        # obstain bbox track results
+        # bboxes.shape=N,4 (x1,y1,x2,y2)
+        bboxes = track_result[0].pred_track_instances.bboxes.to("cpu")
+        labels = track_result[0].pred_track_instances.labels.to("cpu")
+        instances_id = track_result[0].pred_track_instances.instances_id.to("cpu")
+        scores = track_result[0].pred_track_instances.scores.to("cpu")
+
+        # apply score threshold and convert to numpy
+        score_selector = scores > args.score_thr
+        bboxes = np.array(bboxes[score_selector]).astype(int)
+        labels = np.array(labels[score_selector])
+        instances_id = np.array(instances_id[score_selector])
+
+        # have to sort fields by offset
+        keyframe_msg.cloud.fields.sort(key=lambda x: x.offset)
+        # convert to numpy (shape=(3,N))
+        xyz = ros_numpy.point_cloud2.pointcloud2_to_xyz_array(
+            keyframe_msg.cloud
+        ).transpose()
+
+        # transform lidar to camera frame
+        translation, rotation = self.tf_listener.lookupTransform(
+            image_msg.header.frame_id, keyframe_msg.cloud.header.frame_id, rospy.Time(0)
+        )
+        lidar_to_cam = self.tf_listener.fromTranslationRotation(translation, rotation)
+
+        # transform lidar to base_link
+        translation, rotation = self.tf_listener.lookupTransform(
+            f"robotcar_{agent_no}/base_link",
+            keyframe_msg.cloud.header.frame_id,
+            rospy.Time(0),
+        )
+        lidar_to_base_link = self.tf_listener.fromTranslationRotation(
+            translation, rotation
+        )
+
+        # translate into homogenous coordinates, then apply tf matrix
+        # xyzw.shape = (4,N)
+        xyzw = np.vstack((xyz, np.ones((xyz.shape[1]))))
+        xyzw_in_cam_frame = lidar_to_cam @ xyzw
+
+        # project the camera image into the point cloud
+        # uv: 2xM, depths: M, correspondences: M
+        uv, depths, correspondences = self.camera_model.project(
+            xyzw_in_cam_frame, (self.img_height, self.img_width)
+        )
+
+        for bbox_idx in range(bboxes.shape[0]):
+            # get the 2d corner coordinates of the bbox
+            x1, y1, x2, y2 = bboxes[bbox_idx]
+
+            # select points within the projected 2D bounding box
+            point_selector = np.logical_and.reduce(
+                [uv[0] >= x1, uv[0] <= x2, uv[1] >= y1, uv[1] <= y2]
+            )
+
+            if args.sam_mask:
+                # make sure to only keep points within the mask
+                mask = track_result[0].pred_track_instances.masks[bbox_idx]
+                mask_selector = mask[uv[1].astype(int), uv[0].astype(int)]
+                point_selector = np.logical_and(point_selector, mask_selector)
+
+            if sum(point_selector) == 0:
+                # no lidar points in this bbox
+                continue
+
+            point_indices = correspondences[point_selector]
+
+            # transform to base link and compute the center as the mean of all points
+            points = lidar_to_base_link @ xyzw[:, point_indices]
+            centroid = np.mean(points, axis=1)
+
+            centroid_point = PointStamped()
+            centroid_point.header.frame_id = f"keyframe/{keyframe_msg.id}"
+            centroid_point.header.stamp = keyframe_msg.header.stamp
+            centroid_point.point.x = centroid[0]
+            centroid_point.point.y = centroid[1]
+            centroid_point.point.z = centroid[2]
+
+            clip_feature = self.get_clip_features(img_rectified_cropped[y1:y2, x1:x2])
+
+            instance_id = instances_id[bbox_idx]
+
+            # make xyz point cloud in (N,3) shape
+            points_Nx3 = points[:3].T
+
+            if (agent_no, instance_id) not in self.tracked_obj_store.keys():
+                # create new TrackedObject
+                with self.tracked_obj_store_sem:
+                    self.tracked_obj_store[(agent_no, instance_id)] = TrackedObject(instance_id)
+
+
+            self.tracked_obj_store[(agent_no, instance_id)].add_observation(
+                centroid_point, clip_feature, points_Nx3, agent_no, keyframe_msg.id
+            )
+            self.tracked_obj_store[(agent_no, instance_id)].publish_latest_obs(self.observations_pub)
+
+
+        self.frame_idxs[agent_no] += 1
+
+    def show_observations(self, timer_event: rospy.timer.TimerEvent):
+        """compute markers for all dynamic observations and send to rviz. This
+        function is automatically being called by ROS timer
+        """
+        ma = MarkerArray()
+
+        rospy.logwarn(f"showing {len(self.tracked_obj_store)} objects")
+
+        trackedObj: TrackedObject
+        with self.tracked_obj_store_sem:
+            for _, trackedObj in self.tracked_obj_store.items():
+                marker = trackedObj.get_marker(self.tf_listener)
+                if marker is not None:
+                    ma.markers.append(marker)
+
+        self.marker_pub.publish(ma)
+
+    def get_clip_features(self, image: np.array) -> np.array:
+        with torch.no_grad():
+            pil_img = PIL.Image.fromarray(image)
+            pil_img = self.clip_preprocess(pil_img).cuda()
+            features = self.clip_model.encode_image(pil_img.unsqueeze(0))
+            features = features.cpu().numpy().flatten()
+        return features
+
+
+if __name__ == "__main__":
+    rospy.init_node("masa_node")
+    args = parse_args()
+    # the args object is passed around in MASA code, so we can't change it. the
+    # following is to adapt it to ROS params from the launch file
+    args.masa_checkpoint = rospy.get_param("~masa_checkpoint")
+    args.masa_config = rospy.get_param("~masa_config")
+    args.texts = rospy.get_param("~masa_prompt")
+    args.score_thr = rospy.get_param("~score_threshold")
+    args.sam_mask = rospy.get_param("~use_sam")
+    args.sam_path = rospy.get_param("~sam_checkpoint")
+    masa_node = MasaNode(args)
+    rospy.spin()

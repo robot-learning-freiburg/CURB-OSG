@@ -1,0 +1,65 @@
+attrs
+PyYAML
+Shapely
+blosc
+aabbtree
+carla==0.9.13
+clang-format
+catkin-tools-clangd
+click==8.0.4
+cmapy
+colour_demosaicing
+cpplint
+filelock
+ftfy
+genpy
+isort==5.12.0
+lxml
+matplotlib
+networkx
+numexpr==2.7.3
+numpy==1.20
+open3d-python
+opencv-python
+osmnx
+pillow
+pylint
+pytest
+pytorch-lightning==1.9
+regex
+rosnumpy
+rospkg
+scikit-learn
+scipy
+setuptools>=75.3.0
+tqdm~=4.64.1
+kornia
+omegaconf
+torchmetrics
+timm==0.4.12
+yapf
+testresources
+openmim
+# mmdet
+# git+https://github.com/facebookresearch/segment-anything.git
+# git+https://github.com/openai/CLIP.git@a1d071733d7111c9c014f024669f959182114e33#egg=CLIP
+# git+https://github.com/CASIA-IVA-Lab/FastSAM
+# MASA:
+supervision
+transformers==4.38.2
+nltk
+lvis
+h5py
+einops
+seaborn
+fairscale
+git+https://github.com/openai/CLIP.git
+git+https://github.com/siyuanliii/TrackEval.git
+git+https://github.com/SysCV/tet.git#subdirectory=teta
+git+https://github.com/scalabel/scalabel.git@scalabel-evalAPI
+git+https://github.com/TAO-Dataset/tao
+git+https://github.com/lvis-dataset/lvis-api.git
+git+https://github.com/xinyu1205/recognize-anything.git
+# git+https://github.com/IDEA-Research/GroundingDINO.git ## error
+git+https://github.com/baaivision/tokenize-anything.git
+git+https://github.com/mcordts/cityscapesScripts.git

@@ -1,0 +1,179 @@
+#!/usr/bin/env python3
+import os
+from typing import Tuple
+import json
+from pyproj import Transformer
+import requests
+import rospy
+from visualization_msgs.msg import Marker, MarkerArray
+from geometry_msgs.msg import Point
+import numpy as np
+from scipy.spatial import KDTree
+import pickle
+from sklearn.cluster import DBSCAN
+from curb_sg_eval.utils import plot_intersections, plot_ways
+
+
+class IntersectionsLoader:
+    def __init__(self):
+        self.zero_easting = rospy.get_param("/robotcar_0/world_zero_easting")
+        self.zero_northing = rospy.get_param("/robotcar_0/world_zero_northing")
+
+        target_crs = "epsg:32630"
+        self.transformer = Transformer.from_crs("epsg:4326", target_crs)
+
+        # retrieve robotcar tracks
+        ins_sub = rospy.Subscriber(
+            "/gps_viz", MarkerArray, self.robotcar_markers_callback
+        )
+        self.robotcar_markers = None
+
+        # wait until callback was hit
+        while self.robotcar_markers == None:
+            rospy.sleep(0.1)
+
+        overpass_query: str = rospy.get_param("~overpass_query")  # type: ignore
+        self.data = self.query_overpass(overpass_query)
+
+        # with open(input_file, "r") as f:
+        #     self.data = json.load(f)
+
+        self.ways = self.extract_ways(self.data)
+        self.isect_ways = []
+
+        self.intersections = self.find_intersections(self.ways)
+
+        self.intersections = self.cluster_intersections(self.intersections)
+
+        dataset_dir = rospy.get_param("~dataset_dir")
+
+        self.export(dataset_dir)
+
+        self.intersection_marker_pub = rospy.Publisher(
+            "osm_intersections", MarkerArray, latch=True, queue_size=1
+        )
+        plot_intersections(self.intersections, self.intersection_marker_pub)
+        self.ways_marker_pub = rospy.Publisher(
+            "osm_ways", MarkerArray, latch=True, queue_size=1
+        )
+        plot_ways(self.ways, self.ways_marker_pub)
+
+    def cluster_intersections(self, intersections):
+        dbscan = DBSCAN(eps=30.0, min_samples=1)
+        dbscan.fit(intersections)
+        clusters = dbscan.labels_
+        # replace clustered intersections by their mean
+        unique_clusters = np.unique(clusters)
+        new_intersections = []
+        for cluster in unique_clusters:
+            if cluster == -1:
+                continue
+            cluster_indices = np.where(clusters == cluster)[0]
+            cluster_intersections = intersections[cluster_indices]
+            mean_intersection = np.mean(cluster_intersections, axis=0)
+            new_intersections.append(mean_intersection)
+        return new_intersections
+    
+    def query_overpass(self, query_url: str):
+        # send query to overpass
+        data = requests.get(query_url)
+        data = json.loads(data.text)
+        return data
+
+    def export(self, output_dir):
+        assert os.path.exists(output_dir), "Output directory does not exist"
+        rospy.loginfo(f"Exporting to {output_dir}")
+
+        ways_pickle_path = os.path.join(output_dir, "ways.pkl")
+        with open(ways_pickle_path, "wb") as f:
+            pickle.dump(self.ways, f)
+        rospy.loginfo(f"Exported ways to {ways_pickle_path}")
+
+        intersections_pickle_path = os.path.join(output_dir, "all_intersections.pkl")
+        with open(intersections_pickle_path, "wb") as f:
+            pickle.dump(self.intersections, f)
+        rospy.loginfo(f"Exported intersections to {intersections_pickle_path}")
+
+    def robotcar_markers_callback(self, msg: MarkerArray):
+        if msg.markers is None:
+            return
+        robotcar_poses = []
+        for m in msg.markers:
+            m: Marker
+            pose = (m.pose.position.x, m.pose.position.y, m.pose.position.z)
+            robotcar_poses.append(pose)
+        self.robotcar_poses = np.array(robotcar_poses)
+        self.robotcar_kdt = KDTree(self.robotcar_poses[:, :2])
+        self.robotcar_markers = msg
+        rospy.loginfo("robotcar markers received")
+
+    def translate_coordinates(self, lat: float, lon: float) -> Tuple[float, float]:
+        x, y = self.transformer.transform(lat, lon)
+        x -= self.zero_easting
+        y -= self.zero_northing
+        return x, y
+
+    def extract_ways(self, json_data):
+        ways = list()
+        for way in json_data["elements"]:
+            ways.append(dict())
+            for i, node_id in enumerate(way["nodes"]):
+                lat = way["geometry"][i]["lat"]
+                lon = way["geometry"][i]["lon"]
+                y, x = self.translate_coordinates(lat, lon)
+                if "name" in way["tags"].keys():
+                    ways[-1][node_id] = (x, y, way["tags"]["name"])
+                else:
+                    ways[-1][node_id] = (x, y, str(way["id"]))
+        return ways
+
+    def find_intersections(self, ways, threshold_range=12.0):
+        node_ids = dict()  # mapping node id to road name
+        intersections = dict()  # mapping node id to intersection (x,y)
+        for way in ways:
+            part_of_isect = False
+            for node_id, node in way.items():
+                if (
+                    node_id in node_ids.keys()  # node is part of at least two ways
+                    and node[2]
+                    not in node_ids[node_id]  # node is part of different roads
+                    and node_id
+                    not in intersections.keys()  # node is not an intersection already
+                    and self.robotcar_kdt.query(
+                        node[:2], k=1, distance_upper_bound=threshold_range
+                    )[0]
+                    < threshold_range  # node is on robotcar track
+                ):
+                    intersections[node_id] = node[:2]
+                    part_of_isect = True
+                node_ids[node_id] = node[2]
+            if part_of_isect:
+                self.isect_ways.append(way)
+
+        return np.array(list(intersections.values()))
+
+    def compute_intersections(self):
+        import pdb
+
+        pdb.set_trace()
+
+    def spin(self):
+        r = rospy.Rate(0.2)
+        while not rospy.is_shutdown():
+            r.sleep()
+
+    def get_intersections(self):
+        return self.intersections
+
+    def get_all_nodes(self):
+        nodes = []
+        for way in self.ways:
+            for node in way.values():
+                nodes.append(node[:2])
+        return np.array(nodes)
+
+
+if __name__ == "__main__":
+    rospy.init_node("osm_retrieve_intersections", anonymous=True)
+    loader = IntersectionsLoader()
+    loader.spin()

@@ -1,0 +1,11 @@
+Header header
+
+float32 precision_all
+float32 recall_all
+float32 mean_dst_all_all
+float32 mean_dst_all_assoc
+
+float32 precision_sel
+float32 recall_sel
+float32 mean_dst_sel_all
+float32 mean_dst_sel_assoc

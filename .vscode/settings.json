@@ -1,0 +1,125 @@
+{
+    "cmake.sourceDirectory": "/workspaces/collaborative-scene-graphs/catkin_ws/src",
+    "ros.distro": "noetic",
+    "python.autoComplete.extraPaths": [
+        "/workspaces/collaborative-scene-graphs/devel/lib/python3/dist-packages",
+        "/opt/ros/noetic/lib/python3/dist-packages",
+        "/workspaces/collaborative-scene-graphs/"
+    ],
+    "python.analysis.extraPaths": [
+        "/workspaces/collaborative-scene-graphs/devel/lib/python3/dist-packages",
+        "/opt/ros/noetic/lib/python3/dist-packages",
+        "/workspaces/collaborative-scene-graphs/",
+        "./src/curb_metrics/scripts",
+        "./src/curb_projection/src"
+    ],
+    "cmake.configureOnOpen": false,
+    "editor.semanticHighlighting.enabled": true,
+    "clangd.arguments": [
+        // If set to true, code completion will include index symbols that are not defined in the scopes
+        // (e.g. namespaces) visible from the code completion point. Such completions can insert scope qualifiers
+        "--all-scopes-completion",
+        // Index project code in the background and persist index on disk.
+        "--background-index",
+        // Enable clang-tidy diagnostics
+        "--clang-tidy",
+        // Whether the clang-parser is used for code-completion
+        //   Use text-based completion if the parser is not ready (auto)
+        "--completion-parse=auto",
+        // Granularity of code completion suggestions
+        //   One completion item for each semantically distinct completion, with full type information (detailed)
+        "--completion-style=detailed",
+        // clang-format style to apply by default when no .clang-format file is found
+        "--fallback-style=Google",
+        // When disabled, completions contain only parentheses for function calls.
+        // When enabled, completions also contain placeholders for method parameters
+        "--function-arg-placeholders",
+        // Add #include directives when accepting code completions
+        //   Include what you use. Insert the owning header for top-level symbols, unless the
+        //   header is already directly included or the symbol is forward-declared
+        "--header-insertion=iwyu",
+        // Prepend a circular dot or space before the completion label, depending on whether an include line will be inserted or not
+        "--header-insertion-decorators",
+        // Enable index-based features. By default, clangd maintains an index built from symbols in opened files.
+        // Global index support needs to enabled separatedly
+        "--index",
+        // Attempts to fix diagnostic errors caused by missing includes using index
+        "--suggest-missing-includes",
+    ],
+    "files.associations": {
+        "*.launch": "xml",
+        "iosfwd": "cpp",
+        "ostream": "cpp",
+        "mutex": "cpp",
+        "shared_mutex": "cpp",
+        "condition_variable": "cpp",
+        "cctype": "cpp",
+        "clocale": "cpp",
+        "cmath": "cpp",
+        "csignal": "cpp",
+        "cstdarg": "cpp",
+        "cstddef": "cpp",
+        "cstdio": "cpp",
+        "cstdlib": "cpp",
+        "cstring": "cpp",
+        "ctime": "cpp",
+        "cwchar": "cpp",
+        "cwctype": "cpp",
+        "array": "cpp",
+        "atomic": "cpp",
+        "strstream": "cpp",
+        "bit": "cpp",
+        "*.tcc": "cpp",
+        "bitset": "cpp",
+        "chrono": "cpp",
+        "cinttypes": "cpp",
+        "codecvt": "cpp",
+        "complex": "cpp",
+        "cstdint": "cpp",
+        "deque": "cpp",
+        "forward_list": "cpp",
+        "list": "cpp",
+        "map": "cpp",
+        "set": "cpp",
+        "unordered_map": "cpp",
+        "unordered_set": "cpp",
+        "vector": "cpp",
+        "exception": "cpp",
+        "algorithm": "cpp",
+        "functional": "cpp",
+        "iterator": "cpp",
+        "memory": "cpp",
+        "memory_resource": "cpp",
+        "numeric": "cpp",
+        "optional": "cpp",
+        "random": "cpp",
+        "ratio": "cpp",
+        "string": "cpp",
+        "string_view": "cpp",
+        "system_error": "cpp",
+        "tuple": "cpp",
+        "type_traits": "cpp",
+        "utility": "cpp",
+        "hash_map": "cpp",
+        "hash_set": "cpp",
+        "fstream": "cpp",
+        "future": "cpp",
+        "initializer_list": "cpp",
+        "iomanip": "cpp",
+        "iostream": "cpp",
+        "istream": "cpp",
+        "limits": "cpp",
+        "new": "cpp",
+        "sstream": "cpp",
+        "stdexcept": "cpp",
+        "streambuf": "cpp",
+        "thread": "cpp",
+        "cfenv": "cpp",
+        "typeindex": "cpp",
+        "typeinfo": "cpp",
+        "valarray": "cpp",
+        "variant": "cpp",
+        "*.ipp": "cpp"
+    },
+    "python.analysis.autoImportCompletions": true
+}

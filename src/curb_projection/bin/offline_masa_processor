@@ -1,0 +1,330 @@
+#!/usr/bin/env python3
+import os
+import sys
+import pathlib
+import pickle
+
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, project_root)
+
+import argparse
+import gc
+import resource
+import warnings
+from functools import partial
+
+import clip
+import cv2
+import message_filters
+import mmcv
+import numpy as np
+import PIL.Image
+import regex
+import ros_numpy
+import rospy
+import torch
+import tqdm
+from cv_bridge import CvBridge
+from geometry_msgs.msg import Point, PointStamped, Quaternion
+from mmcv.ops.nms import batched_nms
+from mmcv.transforms import Compose
+from mmdet.apis import init_detector
+from mmdet.registry import VISUALIZERS, MODELS
+from mmengine.utils import track_iter_progress
+from mmengine.config import Config
+from sensor_msgs.msg import Image
+from tf import LookupException, TransformListener
+from torch.multiprocessing import Pool, set_start_method
+from vision_msgs.msg import BoundingBox2D
+from visualization_msgs.msg import Marker, MarkerArray
+from sensor_msgs.msg import PointCloud2
+import sensor_msgs.point_cloud2 as pcl2
+
+import masa
+from curb_projection.camera_model import CameraModel
+from curb_projection.msg import Keyframe_msg
+from curb_projection.msg import TrackedObjectObs as TrackedObjectObs_msg
+from masa.apis import (
+    build_test_pipeline,
+    inference_detector,
+    inference_masa,
+    init_masa,
+)
+from masa.models.sam import SamPredictor, sam_model_registry
+from masa.utils import filter_and_update_tracks
+
+warnings.filterwarnings("ignore")
+
+# Ensure the right start method for multiprocessing
+try:
+    set_start_method("spawn")
+except RuntimeError:
+    pass
+
+
+def set_file_descriptor_limit(limit):
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (limit, hard))
+
+
+# Set the file descriptor limit to 65536
+set_file_descriptor_limit(65536)
+
+
+def visualize_frame(args, visualizer, frame, track_result, frame_idx, fps=None):
+    visualizer.add_datasample(
+        name="video_" + str(frame_idx),
+        image=frame[:, :, ::-1],
+        data_sample=track_result[0],
+        draw_gt=False,
+        show=False,
+        out_file=None,
+        pred_score_thr=args.score_thr,
+        fps=fps,
+    )
+    frame = visualizer.get_image()
+    gc.collect()
+    return frame
+
+
+def parse_args():
+
+    parser = argparse.ArgumentParser(description="MASA ROS node")
+    parser.add_argument("--det_config", help="Detector Config file")
+    parser.add_argument("--masa_config", help="Masa Config file")
+    parser.add_argument("--det_checkpoint", help="Detector Checkpoint file")
+    parser.add_argument("--masa_checkpoint", help="Masa Checkpoint file")
+    parser.add_argument("--device", default="cuda:0", help="Device used for inference")
+    parser.add_argument(
+        "--score-thr", type=float, default=0.2, help="Bbox score threshold"
+    )
+    parser.add_argument("--texts", help="text prompt")
+    parser.add_argument("--line_width", type=int, default=5, help="Line width")
+    parser.add_argument(
+        "--unified",
+        action="store_true",
+        help="Use unified model, which means the masa adapter is built upon the detector model.",
+    )
+    parser.add_argument(
+        "--detector_type", type=str, default="mmdet", help="Choose detector type"
+    )
+    parser.add_argument("--fp16", action="store_true", help="Activation fp16 mode")
+    parser.add_argument(
+        "--no-post", action="store_true", help="Do not post-process the results "
+    )
+    parser.add_argument("--show_fps", action="store_true", help="Visualize the fps")
+    parser.add_argument(
+        "--sam_path",
+        type=str,
+        default="saved_models/pretrain_weights/sam_vit_h_4b8939.pth",
+        help="Default path for SAM models",
+    )
+    parser.add_argument(
+        "--sam_type", type=str, default="vit_h", help="Default type for SAM models"
+    )
+    parser.add_argument(
+        "--input_dir", type=str, help="Path containing input video frames"
+    )
+    parser.add_argument(
+        "--output_dir", type=str, help="Path to directory for output tracking results"
+    )
+    parser.add_argument(
+        "--wait-time",
+        type=float,
+        default=1,
+        help="The interval of show (s), 0 is block",
+    )
+    args = parser.parse_args("")
+    return args
+
+
+class OfflineMasaProcessor:
+    def __init__(self, args):
+        self.args = args
+        # build the model from a config file and a checkpoint file
+        self.config = Config.fromfile(args.masa_config)
+        self.masa_model = init_masa(
+            self.config, args.masa_checkpoint, device=args.device
+        )
+
+        print("Loading SAM model...")
+        self.device = args.device
+        self.sam_model = sam_model_registry[args.sam_type](args.sam_path)
+        self.sam_predictor = SamPredictor(self.sam_model.to(self.device))
+
+        #### parsing the text input
+        self.texts = args.texts
+        assert self.texts is not None
+        self.masa_test_pipeline = build_test_pipeline(
+            self.masa_model.cfg, with_text=True
+        )
+        self.masa_model.cfg.visualizer["texts"] = self.texts
+
+        # init CLIP
+        self.clip_model, self.clip_preprocess = clip.load("ViT-B/16")
+
+        # init visualizer
+        self.masa_model.cfg.visualizer["line_width"] = args.line_width
+        self.masa_model.cfg.visualizer["alpha"] = 0.5
+        self.visualizer = VISUALIZERS.build(self.masa_model.cfg.visualizer)
+
+        self.bridge = CvBridge()
+
+        # prepare camera model
+        models_dir = rospy.get_param("~models_dir")
+        self.camera_model = CameraModel(models_dir, self.args.input_dir)
+
+        cam = self.camera_model.camera
+        if 'mono' in cam:
+            self.demosaic_mode = cv2.COLOR_BayerBG2BGR
+            self.crop_lower_px = 0
+        elif 'stereo' in cam:
+            self.demosaic_mode = cv2.COLOR_BayerGR2BGR
+            # crop a few pixel from the bottom for stereo camera to get rid of car hood
+            self.crop_lower_px = 190
+        else:
+            raise RuntimeError(f"Can not determine color mode from camera name {self.camera_model.camera}")
+            
+        self.frame_skip = int(rospy.get_param("~frameskip"))
+        self.frame_id = 0
+        print("MASA offline tracker ready")
+    
+    def run(self, input_dir, output_dir):
+        image_files = [f for f in os.listdir(input_dir) if f.endswith('.png')]
+        image_files.sort()
+
+        assert len(image_files) > 0, "No input images found!"
+
+        os.makedirs(output_dir, exist_ok=True)
+
+        # check that dir is empty
+        if os.listdir(output_dir):
+            print("output directory not empty, will skip existing frames")
+
+        print(f"Loading images from {args.input_dir}")
+        print(f"Saving images to {args.output_dir}")
+
+        for filename in tqdm.tqdm(image_files[::self.frame_skip]):
+            if rospy.is_shutdown():
+                break
+            try:
+                file_path = os.path.join(input_dir, filename)
+                stamp = pathlib.Path(filename).stem
+                output_viz_file = os.path.join(output_dir, stamp + ".png")
+                output_track_data_filename = os.path.join(output_dir, stamp + ".trackdata")
+                if (os.path.exists(output_track_data_filename)):
+                    continue
+
+                image = cv2.imread(file_path, cv2.IMREAD_UNCHANGED)
+                image = cv2.demosaicing(image, self.demosaic_mode)
+                track_data, viz_frame = self.process_frame(image)
+
+                # cvt back to rgb and write
+                viz_frame = cv2.cvtColor(viz_frame, cv2.COLOR_BGR2RGB)
+                cv2.imwrite(output_viz_file, viz_frame)
+
+                # serialize track data
+                track_data_dict = track_data.to_dict()
+                with open(output_track_data_filename, "wb") as f:
+                    pickle.dump(track_data_dict, f)
+            except:
+                print(f"oh no! ({filename})")
+                continue
+        
+        exit()
+            
+
+
+    def process_frame(self, image: np.ndarray):
+        img_rectified = self.camera_model.undistort(image)
+        img_rectified_cropped = img_rectified[:-(self.crop_lower_px+1)]
+
+        track_result = inference_masa(
+            self.masa_model,
+            img_rectified_cropped,
+            frame_id=self.frame_id,
+            video_len=-1,
+            test_pipeline=self.masa_test_pipeline,
+            text_prompt=self.texts,
+            fp16=self.args.fp16,
+            detector_type=self.args.detector_type,
+            show_fps=False
+        )
+
+        if "masks" in track_result[0].pred_track_instances:
+            if len(track_result[0].pred_track_instances.masks) > 0:
+                track_result[0].pred_track_instances.masks = torch.stack(
+                    track_result[0].pred_track_instances.masks, dim=0
+                )
+                track_result[0].pred_track_instances.masks = (
+                    track_result[0].pred_track_instances.masks.cpu().numpy()
+                )
+
+
+        track_result[0].pred_track_instances.bboxes = track_result[
+            0
+        ].pred_track_instances.bboxes.to(torch.float32)
+
+        track_result = track_result.to(self.device)
+        track_result[0].pred_track_instances.instances_id = track_result[0].pred_track_instances.instances_id.to(self.device)
+        track_result[0].pred_track_instances = track_result[0].pred_track_instances[(track_result[0].pred_track_instances.scores.float() > args.score_thr).to(self.device)]
+        input_boxes = track_result[0].pred_track_instances.bboxes
+        if len(input_boxes) > 0:
+            self.sam_predictor.set_image(img_rectified_cropped)
+            transformed_boxes = self.sam_predictor.transform.apply_boxes_torch(
+                input_boxes, img_rectified_cropped.shape[:2]
+            )
+            masks, _, _ = self.sam_predictor.predict_torch(
+                point_coords=None,
+                point_labels=None,
+                boxes=transformed_boxes,
+                multimask_output=False,
+            )
+            track_result[0].pred_track_instances.masks = masks.squeeze(1).cpu().numpy()
+        
+        clip_features = []
+        bboxes = np.array(track_result[0].pred_track_instances.bboxes.to("cpu")).astype(int)
+        for bbox in bboxes:
+            x1, y1, x2, y2 = bbox
+            clip_feature = self.get_clip_features(img_rectified_cropped[y1:y2, x1:x2])
+            clip_features.append(clip_feature)
+        track_result[0].pred_track_instances.clip_features = np.array(clip_features)
+
+        viz_frame = visualize_frame(
+            self.args,
+            self.visualizer,
+            img_rectified_cropped,
+            track_result.to("cpu"),
+            self.frame_id
+        )
+
+        pred_track_instances_cpu = track_result[0].pred_track_instances.to("cpu")
+
+        self.frame_id += 1
+
+        return (pred_track_instances_cpu, viz_frame)
+
+    def get_clip_features(self, image: np.array) -> np.array:
+        with torch.no_grad():
+            pil_img = PIL.Image.fromarray(image)
+            pil_img = self.clip_preprocess(pil_img).cuda()
+            features = self.clip_model.encode_image(pil_img.unsqueeze(0))
+            features = features.cpu().numpy().flatten()
+        return features
+
+
+if __name__ == "__main__":
+    rospy.init_node("masa_node")
+    args = parse_args()
+    # the args object is passed around in MASA code, so we can't change it. the
+    # following is to adapt it to ROS params from the launch file
+    args.masa_checkpoint = rospy.get_param("~masa_checkpoint")
+    args.masa_config = rospy.get_param("~masa_config")
+    args.texts = rospy.get_param("~masa_prompt")
+    args.score_thr = rospy.get_param("~score_threshold")
+    args.sam_path = rospy.get_param("~sam_checkpoint")
+    args.input_dir = rospy.get_param("~input_dir")
+    args.output_dir = rospy.get_param("~output_dir")
+    masa_node = OfflineMasaProcessor(args)
+    masa_node.run(args.input_dir, args.output_dir)

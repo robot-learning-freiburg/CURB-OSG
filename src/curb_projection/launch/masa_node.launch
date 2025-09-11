@@ -1,0 +1,29 @@
+<launch>
+
+  <arg name="image_topic" default="stereo/left" />
+  <arg name="keyframes_topic" default="/agent_keyframes" />
+  <arg name="models_dir" default="$(find curb_projection)/intrinsics" />
+  <arg name="masa_checkpoint" default="$(find curb_projection)/saved_models/masa_models/gdino_masa.pth" />
+  <arg name="masa_viz_topic" default="masa_viz" />
+  <arg name="masa_config" default="$(find curb_projection)/config/masa/masa-gdino/masa_gdino_swinb_inference_for_curb.py" />
+  <arg name="masa_prompt" default="vehicle" />
+  <arg name="use_sam" default="true" />
+  <arg name="sam_checkpoint" default="$(find curb_projection)/saved_models/pretrain_weights/sam_vit_h_4b8939.pth" />
+
+
+  <node pkg="curb_projection" type="masa_node" name="masa_node" required="true" output="screen">
+    <param name="keyframes_topic" value="$(arg keyframes_topic)" />
+    <param name="image_topic" value="$(arg image_topic)" />
+    <param name="models_dir" value="$(arg models_dir)" />
+    <param name="masa_checkpoint" value="$(arg masa_checkpoint)" />
+    <param name="stereo_width" value="1280" />
+    <param name="stereo_height" value="960" />
+    <param name="masa_viz_topic" value="$(arg masa_viz_topic)" />
+    <param name="masa_config" value="$(arg masa_config)" />
+    <param name="masa_prompt" value="$(arg masa_prompt)" />
+    <param name="score_threshold" value="0.33" />
+    <param name="use_sam" value="$(arg use_sam)" />
+    <param name="sam_checkpoint" value="$(arg sam_checkpoint)" />
+  </node>
+
+</launch>

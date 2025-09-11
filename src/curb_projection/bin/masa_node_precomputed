@@ -1,0 +1,341 @@
+#!/usr/bin/env python3
+import os
+import sys
+
+import tf2_ros
+
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, project_root)
+
+from functools import partial
+from threading import Semaphore
+import pickle
+import blosc
+from bisect import bisect_left
+
+import clip
+import message_filters
+import numpy as np
+import PIL.Image
+import ros_numpy
+import rospy
+import torch
+import cv2
+from cv_bridge import CvBridge
+from geometry_msgs.msg import PointStamped, Quaternion
+from sensor_msgs.msg import Image
+from radar_robotcar_player.msg import OxfordTime
+from tf import LookupException, ExtrapolationException, TransformListener
+from torch.multiprocessing import Pool, set_start_method
+from visualization_msgs.msg import Marker, MarkerArray
+import sensor_msgs.point_cloud2 as pcl2
+from mmengine.structures import InstanceData
+
+from curb_projection.camera_model import CameraModel
+from hdl_graph_slam.msg import Keyframe_msg
+from curb_projection.msg import TrackedObjectObs as TrackedObjectObs_msg
+from curb_projection.msg import TrackedObjectObsArray as TrackedObjectObsArray_msg
+from std_msgs.msg import String
+
+
+
+class TrackingCamera:
+    def __init__(self, agent_no, dataset_path, camera_name, tf_name: str):
+        self.score_thr = rospy.get_param("~score_threshold")
+        self.use_sam = rospy.get_param("~use_sam")
+
+        self.agent_no = agent_no
+        self.tf_name = f"robotcar_{agent_no}/{tf_name}"
+
+        # init dependencies
+        # interpolating tf listener with a memory of 2 minutes
+        self.tf_listener = TransformListener(
+            cache_time=rospy.Duration(120), interpolate=True
+        )
+        self.bridge = CvBridge()
+
+        # load static transform: base link to camera
+        self.base_link_frame = f"robotcar_{agent_no}/base_link"
+        self.tf_listener.waitForTransform(
+            self.tf_name, self.base_link_frame, rospy.Time(0), timeout=rospy.Duration(10.0)
+        )
+        translation, rotation = self.tf_listener.lookupTransform(
+            self.tf_name, self.base_link_frame, rospy.Time(0)
+        )
+        self.base_link_to_cam = self.tf_listener.fromTranslationRotation(
+            translation, rotation
+        )
+
+        self.data_path = os.path.join(dataset_path, camera_name)
+        assert os.path.exists(
+            self.data_path
+        ), f"agent {agent_no} camera {camera_name}: data path {self.data_path} not found"
+
+        self.read_stamps()
+
+        # prepare camera model
+        models_dir = rospy.get_param("~models_dir")
+        self.camera_model = CameraModel(models_dir, camera_name)
+
+        self.camera_name = camera_name
+
+        # set image size depending on camera type
+        if camera_name == "stereo/left":
+            # cropping value is to remove the engine hood from front camera images
+            crop_lower_px = 190
+            self.img_width = 1280
+            self.img_height = 959 - crop_lower_px
+        else:
+            # mono cam
+            self.img_width = 1024
+            self.img_height = 1023
+
+        masa_viz_topic = rospy.get_param("~masa_viz_topic")
+        self.bbox_viz_pub = rospy.Publisher(
+            f"/robotcar_{agent_no}/{camera_name}/{masa_viz_topic}", Image, queue_size=1
+        )
+
+        # offset parameter to align keyframes with agent's oxford clock
+        self.timediff_wall2oxf = rospy.get_param(
+            f"/robotcar_{agent_no}/timediff_wall2oxford"
+        )
+
+    def read_stamps(self):
+        files = os.listdir(self.data_path)
+        self.trackdata_files = [f for f in files if f.endswith(".trackdata.blosc")]
+        self.viz_img_files = [f for f in files if f.endswith(".png")]
+        self.trackdata_files.sort()
+        self.viz_img_files.sort()
+
+        assert len(self.trackdata_files) == len(
+            self.viz_img_files
+        ), f"number of images does not match number of trackdata in {self.data_path}"
+
+        timestamps_str = [f.split(".")[0] for f in self.trackdata_files]
+        self.timestamps = [int(stamp) / 1e6 for stamp in timestamps_str]
+
+    def find_closest_sample(self, stamp: float) -> int:
+        """
+        Returns index of tracking sample files closest to the given timestamp.
+        Timestamp must be in seconds and lists must be sorted.
+        """
+        pos = bisect_left(self.timestamps, stamp)
+        if pos == 0:
+            return 0
+        if pos == len(self.timestamps):
+            return pos - 1
+        before = self.timestamps[pos - 1]
+        after = self.timestamps[pos]
+        if (after - stamp) < (stamp - before):
+            return pos
+        else:
+            return pos - 1
+
+    def process_keyframe(self, keyframe_msg: Keyframe_msg):
+        keyframe_stamp_wall = keyframe_msg.header.stamp.to_sec()
+        keyframe_stamp_oxf = keyframe_stamp_wall - self.timediff_wall2oxf
+
+        sample_idx = self.find_closest_sample(keyframe_stamp_oxf)
+        sample_stamp_oxf = self.timestamps[sample_idx]
+        trackdata_file = os.path.join(self.data_path, self.trackdata_files[sample_idx])
+        viz_frame_file = os.path.join(self.data_path, self.viz_img_files[sample_idx])
+
+        sample_stamp_wall = sample_stamp_oxf + self.timediff_wall2oxf
+
+        assert os.path.exists(
+            viz_frame_file
+        ), f"MASA: Viz frame {viz_frame_file} missing!"
+        assert os.path.exists(
+            trackdata_file
+        ), f"MASA: track data {trackdata_file} missing!"
+
+        # use lidar odometry to transform the point cloud to the exact time where the picture was taken
+        try:
+            t,r = self.tf_listener.lookupTransformFull(
+                self.base_link_frame,
+                rospy.Time(sample_stamp_wall),
+                self.base_link_frame,
+                rospy.Time(keyframe_stamp_wall),
+                f"/robotcar_{self.agent_no}/odom",
+            )
+            tf_kf2sampletime = self.tf_listener.fromTranslationRotation(t, r)
+        except ExtrapolationException as e:
+            rospy.logwarn("Masa projection node: %s", repr(e))
+            tf_kf2sampletime = np.eye(4)
+
+        # only load and publish frame visualization if we have subscribers
+        if self.bbox_viz_pub.get_num_connections() > 0:
+            viz_frame = cv2.imread(viz_frame_file, cv2.IMREAD_COLOR)
+            viz_msg = self.bridge.cv2_to_imgmsg(viz_frame)
+            self.bbox_viz_pub.publish(viz_msg)
+
+        # load tracking data from disk
+        with open(trackdata_file, "rb") as f:
+            trackdata = pickle.loads(blosc.decompress(f.read()))
+
+        # bboxes.shape=N,4 (x1,y1,x2,y2)
+        scores = np.array(trackdata["scores"])
+
+        selector = scores > self.score_thr
+        bboxes = np.array(trackdata["bboxes"])[selector].astype(int)
+        labels = np.array(trackdata["labels"])[selector]
+        instance_ids = np.array(trackdata["instances_id"])[selector]
+        clip_features = np.array(trackdata["clip_features"])[selector]
+
+        masks = None
+        if self.use_sam and "masks" in trackdata.keys():
+            masks = np.array(trackdata["masks"])[selector]
+
+        # have to sort fields by offset
+        keyframe_msg.cloud.fields.sort(key=lambda x: x.offset)
+        # convert to numpy (shape=(3,N))
+        xyz = ros_numpy.point_cloud2.pointcloud2_to_xyz_array(
+            keyframe_msg.cloud
+        ).transpose()
+
+        # translate into homogenous coordinates, then apply tf matrix
+        # xyzw.shape = (4,N)
+        xyzw = np.vstack((xyz, np.ones((xyz.shape[1]))))
+        # use timedelta and baselink2cam tfs to transform into camera frame at the exact timestamp
+        xyzw_in_cam_frame = self.base_link_to_cam @ tf_kf2sampletime @ xyzw
+
+        # project the camera image into the point cloud
+        # uv: 2xM, depths: M, correspondences: M
+        uv, depths, correspondences = self.camera_model.project(
+            xyzw_in_cam_frame, (self.img_height, self.img_width)
+        )
+
+        observations = []
+        for bbox_idx in range(bboxes.shape[0]):
+            # get the 2d corner coordinates of the bbox
+            x1, y1, x2, y2 = bboxes[bbox_idx]
+
+            # select points within the projected 2D bounding box
+            point_selector = np.logical_and.reduce(
+                [uv[0] >= x1, uv[0] <= x2, uv[1] >= y1, uv[1] <= y2]
+            )
+
+            if self.use_sam and masks is not None:
+                # only keep points within the mask
+                mask = masks[bbox_idx]
+                mask_selector = mask[uv[1].astype(int), uv[0].astype(int)]
+                point_selector = np.logical_and(point_selector, mask_selector)
+
+            if sum(point_selector) == 0:
+                # no lidar points in this bbox
+                continue
+
+            point_indices = correspondences[point_selector]
+
+            # compute the center as the mean of all points
+            obj_points = xyzw[:, point_indices]
+            centroid = np.mean(obj_points, axis=1)
+
+            centroid_point = PointStamped()
+            centroid_point.header.frame_id = f"keyframe/{keyframe_msg.id}"
+            centroid_point.header.stamp = keyframe_msg.header.stamp
+            centroid_point.point.x = centroid[0]
+            centroid_point.point.y = centroid[1]
+            centroid_point.point.z = centroid[2]
+
+            # make xyz point cloud in (N,3) shape
+            points_Nx3 = obj_points[:3].T
+
+            obs_msg = TrackedObjectObs_msg()
+            obs_msg.header.stamp = keyframe_msg.header.stamp
+            obs_msg.header.frame_id = keyframe_msg.header.frame_id
+
+            
+            obs_msg.camera.data = self.camera_name
+            obs_msg.centroid = centroid_point
+            obs_msg.clip_feature = clip_features[bbox_idx]
+            obs_msg.cloud = pcl2.create_cloud_xyz32(obs_msg.header, points_Nx3)
+            obs_msg.keyframe_id = keyframe_msg.id
+            obs_msg.observing_agent_id = keyframe_msg.agent_no
+            obs_msg.instance_id = instance_ids[bbox_idx]
+            observations.append(obs_msg)
+
+        return observations
+
+
+class TrackingAgent:
+    def __init__(self, agent_no: int):
+
+        self.is_ok = True
+
+        try:
+            dataset = rospy.get_param(f"/robotcar_{agent_no}/dataset")
+            rospy.loginfo(f"dataset path for agent {agent_no}: {dataset}")
+            self.tracking_data_path = os.path.join(dataset, "masa_preprocessed")
+        except KeyError:
+            self.tracking_data_path = None
+            self.is_ok = False
+            rospy.logwarn(f"dataset path not set for agent {agent_no}")
+            return
+
+        cameras = ["stereo/left", "mono_left", "mono_right", "mono_rear"]
+        cam_frames = ["stereo_left", "mono_left", "mono_right", "mono_rear"]
+
+        # create camera objects
+        self.tracking_cams = []
+        for cam, tf in zip(cameras, cam_frames):
+            try:
+                self.tracking_cams.append(
+                    TrackingCamera(agent_no, self.tracking_data_path, cam, tf)
+                )
+            except tf2_ros.TransformException as e:
+                rospy.logwarn(f"agent {agent_no} no transform available: {e}")
+                self.is_ok = False
+                return
+
+    def process_keyframe(self, keyframe_msg: Keyframe_msg):
+        all_observations = []
+        for tracking_cam in self.tracking_cams:
+            observations = tracking_cam.process_keyframe(keyframe_msg)
+            all_observations += observations
+        return all_observations
+
+
+class MasaNodePrecomputed:
+    def __init__(self):
+        # initialize tracking agents
+        self.tracking_agents = []
+        for agent_no in range(3):
+            tracking_agent = TrackingAgent(agent_no)
+            if tracking_agent.is_ok:
+                self.tracking_agents.append(tracking_agent)
+
+        if len(self.tracking_agents) == 0:
+            rospy.logerr(f"MASA node could not find any agents with datasets. exiting.")
+            exit(1)
+
+        # subscribers
+        self.tf_listener = TransformListener(
+            cache_time=rospy.Duration(120), interpolate=True
+        )
+        keyframes_topic = rospy.get_param("~keyframes_topic")
+        kf_sub = rospy.Subscriber(
+            keyframes_topic, Keyframe_msg, self.keyframe_callback, queue_size=16
+        )
+
+        # publishers
+        self.observations_pub = rospy.Publisher(
+            "masa_observations", TrackedObjectObsArray_msg, queue_size=16
+        )
+
+
+    def keyframe_callback(self, keyframe_msg: Keyframe_msg):
+        tracking_agent = self.tracking_agents[keyframe_msg.agent_no]
+
+        observations = tracking_agent.process_keyframe(keyframe_msg)
+        observations_msg = TrackedObjectObsArray_msg()
+
+        for obs in observations:
+            observations_msg.observations.append(obs)
+        self.observations_pub.publish(observations_msg)
+
+if __name__ == "__main__":
+    rospy.init_node("masa_node")
+    masa_node = MasaNodePrecomputed()
+    rospy.spin()
